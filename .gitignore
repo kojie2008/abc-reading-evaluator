@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Data
+data/downloads/
+data/reports/*.html
+data/reports/*.json
+
+# Virtual env
+venv/
+.venv/
+
+# System
+.DS_Store
+*.swp
