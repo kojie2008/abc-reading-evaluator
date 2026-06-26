@@ -225,19 +225,6 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
     print(f"  🎯 单词准确率: {overall_score['accuracy']:.1f}%")
     print(f"  📊 五维评分: {six_dim['total']}/{six_dim['max_total']} "
           f"{'✅通过' if six_dim['passed'] else '❌未通过'}")
-    print(f"{'=' * 60}")
-
-    # ── 朋友圈文案 ──
-    report_url = publish_result.get("url", "") if not skip_publish and publish_result else ""
-    summary = generate_friendly_summary(
-        opus_info, overall_score, six_dim, report_url
-    )
-    print(f"\n{'=' * 60}")
-    print("📱 朋友圈打卡文案 (可直接复制):")
-    print(f"{'=' * 60}")
-    print(summary)
-    print(f"{'=' * 60}")
-
     result = {
         "opus_info": opus_info,
         "page_results": page_results,
