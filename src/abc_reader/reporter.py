@@ -671,7 +671,7 @@ def generate_json(
                 "type": str(t.get("type", "")),
                 "title": str(t.get("title", "")),
                 "description": str(t.get("description", "")),
-                "data": [],
+                "data": t.get("words") or t.get("pairs") or t.get("sentences") or [],
             }
             for t in training
         ],

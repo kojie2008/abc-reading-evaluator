@@ -131,6 +131,49 @@ def _syllable_count(word: str) -> int:
     return max(1, count)
 
 
+def _has_long_vowel_pattern(word: str) -> bool:
+    """检测单词中是否有长元音或双元音拼写模式。"""
+    w = word.lower().strip(".,!?;:'\"")
+    patterns = [
+        # 长元音常见拼写
+        r'ee',   # see, tree, green
+        r'ea',   # sea, read, please
+        r'oo',   # moon, soon
+        r'oa',   # boat, coat
+        r'ai',   # rain, train
+        r'ay',   # say, play
+        r'ie',   # lie, tie (in certain patterns)
+        r'igh',  # high, light, night
+        r'ow',   # know, slow（长元音 O）
+        r'ue',   # blue, true
+        r'ew',   # new, few
+        r'ou',   # out, cloud（双元音）
+        r'oi',   # oil, join
+        r'oy',   # toy, boy
+        r'are',  # care, share
+        r'ere',  # here, there
+        r'ire',  # fire, hire
+        r'ore',  # more, sore
+        r'ure',  # pure, cure
+        r'ear',  # ear, fear
+        r'air',  # air, hair
+        r'eer',  # deer, cheer
+        # 元音 + 沉默 e 模式 (CVCE)
+        r'a.e$',
+        r'e.e$',
+        r'i.e$',
+        r'o.e$',
+        r'u.e$',
+    ]
+    for pat in patterns:
+        if re.search(pat, w):
+            return True
+    return False
+
+
+# 功能词黑名单——这些即使读错了也不是
+
+
 def classify_error(expected: str, read_as: str) -> str:
     """
     Classify a substitution error into a category.
@@ -404,21 +447,35 @@ def generate_training(
         })
 
     # ── 3. Tricky Words Exercise (疑难词汇训练) ──
-    # Most frequently substituted words
-    sub_counter = Counter(e["expected"] for e in substitutions)
-    tricky = sub_counter.most_common(10)
-    if tricky and tricky[0][1] >= 2:  # at least 2x to be "tricky"
+    # 找真正读不准的长音词/生词：排除功能词，取>=2音节或含长元音拼写的
+    tricky_details = {}
+    for sub in substitutions:
+        e = sub["expected"].lower().strip()
+        r = sub["read_as"].lower().strip()
+        if e in _FUNCTION_WORDS:
+            continue
+        if _syllable_count(e) < 2 and not _has_long_vowel_pattern(e):
+            continue
+        if e not in tricky_details:
+            tricky_details[e] = {"word": sub["expected"], "errors": [], "count": 0}
+        if r not in tricky_details[e]["errors"]:
+            tricky_details[e]["errors"].append(r)
+        tricky_details[e]["count"] += 1
+
+    tricky_words = sorted(tricky_details.values(), key=lambda x: -x["count"])[:8]
+    tricky_words = [t for t in tricky_words if t["count"] >= 2]
+    if tricky_words:
         training.append({
             "type": "tricky_words",
-            "title": "🎯 疑难词汇集中训练",
-            "description": "以下是你多次读错的「顽固词」——建议反复跟读标准录音：",
+            "title": "🎯 长音 / 难词纠音训练",
+            "description": "以下是你发音不准的长音词和生词——对照原音逐个练习：",
             "words": [
                 {
-                    "word": w,
-                    "errors": [e["read_as"] for e in substitutions if e["expected"] == w][:3],
-                    "count": c,
+                    "word": w["word"],
+                    "errors": list(w["errors"])[:3],
+                    "count": w["count"],
                 }
-                for w, c in tricky if c >= 2
+                for w in tricky_words
             ],
         })
 
