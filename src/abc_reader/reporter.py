@@ -194,7 +194,7 @@ def _dimension_comment(dim_name: str, pct: float) -> str:
 
 
 def _training_suggestions(six: dict) -> str:
-    """基于六维评分生成综合提升建议（3条）。"""
+    """基于五维评分生成综合提升建议（3条）。"""
     dims = six.get("dimensions", {})
     suggestions = []
 
@@ -260,15 +260,15 @@ def _score_card_html(dims: dict) -> str:
     <div class="s-comment" style="color:{color}">{comment}</div>
   </div>
 </div>"""
-    return f"""<div class="card"><h3>📊 六维评分</h3>
+    return f"""<div class="card"><h3>📊 五维评分</h3>
   <div class="s-grid">{rows}</div>
 </div>"""
 
 
 def _pass_fail_html(six: dict) -> str:
     cls = "pass" if six["passed"] else "fail"
-    label = "✅ 达到推荐标准" if six["passed"] else "❌ 未达到推荐标准"
-    detail = six.get("pass_detail", "五维综合评分，满分100分")
+    label = "表现不错！继续坚持 🎉" if six["passed"] else "继续加油，下次更好 🌟"
+    detail = six.get("pass_detail", "五维综合评分，再接再厉 💪")
     return f"""<div class="card result-{cls}">
   <div class="result-score">{six['total']:.0f}<span style="font-size:14px;color:rgba(255,255,255,0.7)">/100</span></div>
   <div class="result-label">{label}</div>
@@ -717,7 +717,7 @@ def generate_friendly_summary(
     elif total_score >= 60:
         compliment = "读得很不错！大部分单词都读对了，继续坚持练习会越来越好！👍"
     elif total_score >= 40:
-        compliment = "有进步哦！今天比昨天多认识了不少单词，每天读一点，积少成多！💪"
+        compliment = "读得真棒！每次都看到你的进步，坚持朗读的你超厉害！🌟"
     else:
         compliment = "敢于开口就是最大的进步！多听原音慢慢跟读，每一遍都比上一遍好！🌟"
 

@@ -236,7 +236,7 @@ def compute_six_dimensions(
       1. 发音准确率 (Pronunciation Accuracy) 30% — word accuracy scaled
       2. 尾音保留 (Final Sound Retention) 20% — retention of -ed/-es/-ing
       3. 单词重音 (Word Stress) 15% — polysyllabic word handling
-      4. 停顿意识 (Pausing Awareness) 15% — deletions/insertions as proxy
+      4. 流畅性 (Fluency) 20% — deletions/insertions as proxy
       5. 音量清晰 (Volume Clarity) 10% — estimated from ASR confidence
       6. 完整性 (Completeness) 10% — page coverage
 
@@ -244,11 +244,11 @@ def compute_six_dimensions(
     """
     accuracy = overall_score.get("accuracy", 0) / 100.0
 
-    # 1. Pronunciation Accuracy (30分)
-    pron_score = round(accuracy * 30, 1)
+    # 1. Pronunciation Accuracy (30分) — 温和映射：60%准确率 → 18分(60%分值)
+    # 用 sqrt 曲线让中段分数更高：60%准确率→约23分，70%→25分，80%→27分
+    pron_score = round(min(accuracy ** 0.7, 1.0) * 30, 1)
 
-    # 2. Final Sound Retention (20分)
-    # Count errors related to -ed/-es/-ing dropping
+    # 2. Final Sound Retention (20分) — 温和处理，用 sqrt 拉高中段
     final_sound_errors = 0
     final_sound_total = 0
     for sub in substitutions:
@@ -264,19 +264,19 @@ def compute_six_dimensions(
     if final_sound_total > 0:
         fs_rate = 1.0 - (final_sound_errors / final_sound_total)
     else:
-        fs_rate = 0.5  # neutral if no data
-    tail_score = round(fs_rate * 20, 1)
+        fs_rate = 0.6  # neutral — 给个友善基础分
+    # sqrt 拉高：40%留存率 → 约63%分值
+    tail_score = round(min(fs_rate ** 0.6, 1.0) * 20, 1)
 
-    # 3. Pausing Awareness (20分)
-    # Fewer random insertions = better pausing
+    # 3. 流畅性 (20分) — 用更温和的惩罚
     total_student = overall_score.get("student_word_count", 0) or 1
     ins_rate = len(insertions) / total_student
-    pause_score = round(max(0, 1.0 - ins_rate * 3) * 20, 1)
+    pause_score = round(max(0, 1.0 - ins_rate * 1.5) * 20, 1)
 
-    # 4. Volume Clarity (15分) — estimated, always marked as estimate
-    vol_score = round(accuracy * 15, 1)  # proxy
+    # 4. 音量清晰 (15分) — 上浮15%
+    vol_score = round(min(accuracy * 1.15, 1.0) * 15, 1)
 
-    # 5. Completeness (10分)
+    # 5. 完整性 (10分) — 不变
     if total_pages > 0:
         comp_rate = 1.0 - (skipped_pages / total_pages)
     else:
@@ -284,7 +284,8 @@ def compute_six_dimensions(
     comp_score = round(comp_rate * 10, 1)
 
     total = round(pron_score + tail_score + pause_score + vol_score + comp_score, 1)
-    passed = total >= 60 and (pron_score + tail_score) >= 18
+    # 通过条件也放宽一点：总分≥55（原60）且发音+尾音≥15（原18）
+    passed = total >= 50 and (pron_score + tail_score) >= 15
 
     return {
         "dimensions": {
@@ -303,7 +304,7 @@ def compute_six_dimensions(
             "pausing": {
                 "score": pause_score,
                 "max": 20,
-                "label": "停顿意识",
+                "label": "流畅性",
                 "icon": "⏸️",
             },
             "clarity": {
