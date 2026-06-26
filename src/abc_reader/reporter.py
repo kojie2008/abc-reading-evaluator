@@ -1,7 +1,20 @@
-"""Report generation for ABC Reading evaluation results."""
+"""
+Report generation for ABC Reading Evaluator v3.0.
+
+Generates:
+  - HTML report (mobile-first, WeChat-friendly, self-contained)
+  - JSON report (structured data for downstream processing)
+
+Features:
+  - Award-certificate style banner with ring progress
+  - Six-dimension scoring with SVG radar chart
+  - Error classification with color-coded word clouds
+  - Per-page analysis with dual audio players
+  - Targeted training material generation
+  - Disclaimer
+"""
 
 import json
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -10,125 +23,383 @@ from typing import Any
 from .config import ReportConfig
 
 
-def _safe_name(text: str) -> str:
-    """Convert text to safe ASCII filename."""
-    safe = re.sub(r"[^\x20-\x7E]", "", text).strip().replace(" ", "_")
-    safe = re.sub(r"_+", "_", safe).strip("_")
-    return safe or "report"
+def _safe(text: str) -> str:
+    """Convert to safe ASCII filename."""
+    s = re.sub(r"[^\x20-\x7E]", "", text).strip().replace(" ", "_")
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or "report"
 
 
-def _build_percent_bar(percent: float, width: int = 120) -> str:
-    """Build an inline SVG percent bar."""
-    color = "#22c55e" if percent >= 80 else "#eab308" if percent >= 60 else "#ef4444"
-    return f"""<svg width="{width}" height="16" style="vertical-align:middle">
-  <rect width="{width}" height="16" rx="8" fill="#e5e7eb"/>
-  <rect width="{int(width * percent / 100)}" height="16" rx="8" fill="{color}"/>
+# ── SVG helpers ──
+
+def _ring_svg(percent: float, size: int = 120, stroke: int = 8) -> str:
+    """Circular progress ring SVG."""
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circ = 2 * 3.14159 * r
+    offset = circ * (1 - percent / 100)
+    return f"""<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="{stroke}"/>
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#fff" stroke-width="{stroke}"
+    stroke-linecap="round" stroke-dasharray="{circ}" stroke-dashoffset="{offset}"
+    transform="rotate(-90, {cx}, {cy})"/>
+  <text x="{cx}" y="{cy - 2}" text-anchor="middle" fill="#fff" font-size="{size * 0.22}" font-weight="bold">{percent:.0f}%</text>
+  <text x="{cx}" y="{cy + 16}" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="{size * 0.1}">准确率</text>
 </svg>"""
 
 
-def _error_summary(all_errors: dict) -> str:
-    """Build consolidated error word cards."""
-    subs = list(set(e["expected"] for e in all_errors.get("substitutions", [])))
-    dels = list(set(all_errors.get("deletions", [])))
-    parts = []
-
-    if subs:
-        cards = []
-        for w in sorted(subs)[:40]:
-            readings = list(set(
-                e["read_as"] for e in all_errors["substitutions"]
-                if e["expected"] == w
-            ))
-            cards.append(
-                f'<span class="word-card error-card"><strong>{w}</strong> → 读成 "{", ".join(readings[:2])}"</span>'
-            )
-        parts.append('<div class="word-section"><h3>🔴 读错的单词 ({})</h3>{}</div>'.format(
-            len(subs), " ".join(cards)
-        ))
-
-    if dels:
-        cards = [f'<span class="word-card del-card"><strong>{w}</strong></span>' for w in sorted(dels)[:30]]
-        parts.append('<div class="word-section"><h3>⏭️ 漏读的单词 ({})</h3>{}</div>'.format(
-            len(dels), " ".join(cards)
-        ))
-
-    return "".join(parts)
+def _bar(w: int, h: int, pct: float, color: str) -> str:
+    """Simple progress bar SVG."""
+    return f"""<svg width="{w}" height="{h}" style="vertical-align:middle;border-radius:{h/2}px">
+  <rect width="{w}" height="{h}" rx="{h/2}" fill="#e5e7eb"/>
+  <rect width="{int(w * pct / 100)}" height="{h}" rx="{h/2}" fill="{color}"/>
+</svg>"""
 
 
-def _page_block(pr: dict) -> str:
-    """Build a single page analysis block."""
-    pn = pr["page_num"]
-    text = (pr.get("text") or "")[:200]
-    score = pr.get("score", {})
-    errors = pr.get("errors", {})
-    marked = (pr.get("marked_text") or "")[:300]
-    acc = score.get("accuracy", 0)
-    subs = errors.get("substitutions", [])
-    dels = errors.get("deletions", [])
-    inss = errors.get("insertions", [])
+def _radar_svg(scores: dict, size: int = 260) -> str:
+    """Six-dimension radar chart SVG."""
+    dims = ["pronunciation", "final_sound", "stress", "pausing", "clarity", "completeness"]
+    labels = [scores[d]["label"] for d in dims]
+    values = [scores[d]["score"] / scores[d]["max"] * 100 for d in dims]
+    colors = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#8b5cf6"]
 
-    badges = ""
-    if subs:
-        badges += f'<span class="badge badge-sub">替换 {len(subs)}</span> '
-    if dels:
-        badges += f'<span class="badge badge-del">漏读 {len(dels)}</span> '
-    if inss:
-        badges += f'<span class="badge badge-ins">多读 {len(inss)}</span> '
+    cx = cy = size / 2
+    r = size * 0.38
+    n = len(dims)
+    angle_step = 2 * 3.14159 / n
+    # Rotate so first axis is at top
+    start_angle = -3.14159 / 2
 
-    detail = ""
-    if subs:
-        items = [
-            f'<span class="word-error">{e["expected"]}</span> → <span class="word-wrong">{e["read_as"]}</span>'
-            for e in subs[:8]
-        ]
-        detail += f'<div class="error-section">🔊 读错: {", ".join(items)}{" ...等{}处".format(len(subs)) if len(subs) > 8 else ""}</div>'
-    if dels:
-        items = [f'<span class="word-deleted">{w}</span>' for w in dels[:8]]
-        detail += f'<div class="error-section">⏭️ 漏读: {", ".join(items)}</div>'
-    if inss:
-        items = [f'<span class="word-inserted">{w}</span>' for w in inss[:6]]
-        detail += f'<div class="error-section">➕ 多读: {", ".join(items)}</div>'
+    # Grid rings
+    rings = ""
+    for level in [25, 50, 75, 100]:
+        lr = r * level / 100
+        pts = " ".join(
+            f"{cx + lr * (a := start_angle + i * angle_step)}"
+            f",{cy + lr * (b := (start_angle + i * angle_step))}"
+            for i in range(n + 1)
+        )
+        rings += f'<polygon points="{pts}" fill="none" stroke="#e5e7eb" stroke-width="1"/>'
 
-    return f"""<div class="page-block">
-  <div class="page-header">
-    <span class="page-num">📄 第 {pn} 页</span>
-    {badges}
-    <span class="page-accuracy">准确率: {acc:.1f}%</span>
+    # Axes
+    axes = ""
+    for i in range(n):
+        xe = cx + r * (a := start_angle + i * angle_step) if False else cx + r
+        xe = cx + r
+        ye = cy + r
+        xe = cx + r * (a := (start_angle + i * angle_step))
+        ye = cy + r * (a := (start_angle + i * angle_step))
+        # Simplify: just draw lines
+        pass
+
+    axes = ""
+    for i in range(n):
+        ang = start_angle + i * angle_step
+        xe = cx + r * (ang := start_angle + i * angle_step)
+        ye = cy + r * (ang := start_angle + i * angle_step)
+        axes += f'<line x1="{cx}" y1="{cy}" x2="{xe}" y2="{ye}" stroke="#d1d5db" stroke-width="1"/>'
+        # Label
+        lx = cx + (r + 22) * (ang := start_angle + i * angle_step)
+        ly = cy + (r + 22) * (ang := start_angle + i * angle_step)
+        axes += f'<text x="{lx}" y="{ly}" text-anchor="middle" font-size="10" fill="#666">{labels[i]}</text>'
+
+    ang = start_angle + i * angle_step
+
+    # Data polygon
+    pts = ""
+    for i in range(n):
+        ang = start_angle + i * angle_step
+        vr = r * min(values[i] / 100, 1)
+        x = cx + vr * (ang := start_angle + i * angle_step)
+        y = cy + vr * (ang := start_angle + i * angle_step)
+        pts += f"{x},{y} "
+    # Close
+    ang0 = start_angle
+    vr0 = r * min(values[0] / 100, 1)
+    pts += f"{cx + vr0 * (ang0 := start_angle)},{cy + vr0 * (ang0 := start_angle)}"
+
+    return f"""<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+  {rings}
+  {axes}
+  <polygon points="{pts}" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>
+</svg>"""
+
+
+# ── Builders ──
+
+def _banner_html(name: str, book: str, level: str, order: int, abctime_score: int,
+                 accuracy: float, total_words: int, ts: datetime) -> str:
+    return f"""<div class="banner">
+  <div class="banner-stars">⭐ 🌟 ✨</div>
+  <div class="banner-label">✦ 朗 读 评 测 报 告 ✦</div>
+  <h1 class="banner-name">{name}</h1>
+  <div class="banner-sub">《{book}》 · Level {level} · 第 {order} 个作品</div>
+  <div class="banner-flex">
+    {_ring_svg(accuracy, 110, 7)}
+    <div class="banner-side">
+      <div class="banner-big">{total_words}</div>
+      <div class="banner-sm">原文总词数</div>
+      <div class="banner-big" style="font-size:18px;margin-top:8px">{abctime_score} 分</div>
+      <div class="banner-sm">ABC Reading 评分</div>
+    </div>
   </div>
-  <div class="page-original"><strong>原文:</strong> {text}</div>
-  <div class="page-marked"><strong>朗读分析:</strong> {marked or "（无音频或未识别）"}</div>
-  {detail}
+  <div class="banner-ts">{ts:%Y-%m-%d %H:%M}</div>
 </div>"""
 
+
+def _score_card_html(dims: dict) -> str:
+    rows = ""
+    for k in ["pronunciation", "final_sound", "stress", "pausing", "clarity", "completeness"]:
+        d = dims[k]
+        pct = d["score"] / d["max"] * 100
+        color = "#22c55e" if pct >= 80 else "#f59e0b" if pct >= 50 else "#ef4444"
+        icon = d.get("icon", "📊")
+        rows += f"""<div class="s-row">
+  <span class="s-icon">{icon}</span>
+  <span class="s-label">{d['label']}</span>
+  <span class="s-val" style="color:{color}">{d['score']:.1f}/{d['max']}</span>
+  {_bar(70, 6, pct, color)}
+</div>"""
+    return f"""<div class="card"><h3>📊 六维评分</h3>
+  <div class="s-grid">{rows}</div>
+</div>"""
+
+
+def _pass_fail_html(six: dict) -> str:
+    cls = "pass" if six["passed"] else "fail"
+    label = "✅ 达到推荐标准" if six["passed"] else "❌ 未达到推荐标准"
+    return f"""<div class="card result-{cls}">
+  <div class="result-score">{six['total']:.0f}<span style="font-size:14px;color:rgba(255,255,255,0.7)">/100</span></div>
+  <div class="result-label">{label}</div>
+  <div class="result-detail">通过条件: 总分≥60 且 发音+尾音≥18/50</div>
+</div>"""
+
+
+def _classified_errors_html(classified: dict) -> str:
+    sections = ""
+    # Map category keys to display info
+    cat_info = {
+        "grammatical_-ed": ("🔊", "尾音 -ed", "#f59e0b"),
+        "grammatical_-ing": ("🔊", "尾音 -ing", "#f59e0b"),
+        "grammatical_-s/es": ("🔊", "尾音 -s/es", "#f59e0b"),
+        "function_word": ("📖", "功能词 (冠词/介词)", "#3b82f6"),
+        "polysyllabic": ("📈", "多音节词/重音", "#8b5cf6"),
+        "vowel": ("🔤", "元音替换", "#ec4899"),
+        "consonant": ("🔤", "辅音替换", "#14b8a6"),
+        "other": ("❓", "其他错误", "#6b7280"),
+    }
+    for cat, info in sorted(classified.items()):
+        data = classified[cat]
+        if not data:
+            continue
+        icon, label, color = cat_info.get(cat, ("❓", cat, "#999"))
+        words = data.get("word_list", [])[:12]
+        word_tags = " ".join(f'<span class="wtag" style="border-color:{color}30;background:{color}10;color:{color}">{w}</span>'
+                            for w in words)
+        sections += f"""<div class="err-cat">
+  <div class="err-cat-head">
+    <span>{icon}</span>
+    <span class="err-cat-label">{label}</span>
+    <span class="err-cat-count">{data['count']}次</span>
+  </div>
+  <div class="err-cat-tags">{word_tags}</div>
+</div>"""
+
+    return f"""<div class="card"><h3>🔍 错误分类统计</h3>
+  <div class="err-grid">{sections}</div>
+</div>"""
+
+
+def _audio_html(url: str, label: str, icon: str, color: str) -> str:
+    if not url:
+        return ""
+    return f"""<div class="ap" style="border-color:{color}">
+  <span class="ap-icon">{icon}</span>
+  <span class="ap-label">{label}</span>
+  <audio controls preload="metadata" style="width:100%;height:36px">
+    <source src="{url}" type="audio/wav">
+    <source src="{url}" type="audio/mpeg">
+  </audio>
+</div>"""
+
+
+def _marked_text_html(errors: dict, text: str) -> str:
+    """Generate color-highlighted text from original text and errors."""
+    words = text.strip().split()
+    if not words:
+        return text
+    # Build a simple set of error words
+    sub_words = {e["expected"] for e in errors.get("substitutions", [])}
+    del_words = set(errors.get("deletions", []))
+    # Tokenize text preserving original case
+    result = []
+    for w in words:
+        w_clean = w.strip(".,!?;:'\"").lower()
+        if w_clean in del_words:
+            result.append(f'<span class="w-del">{w}</span>')
+        elif w_clean in sub_words:
+            # Find the read-as for this word
+            read_as = ""
+            for e in errors.get("substitutions", []):
+                if e["expected"].lower() == w_clean:
+                    read_as = e["read_as"]
+                    break
+            if read_as:
+                result.append(f'<span class="w-err">{w}<span class="w-read">→{read_as}</span></span>')
+            else:
+                result.append(f'<span class="w-err">{w}</span>')
+        else:
+            result.append(f'<span class="w-correct">{w}</span>')
+    return " ".join(result)
+
+
+def _page_block_html(pr: dict) -> str:
+    pn = pr["page_num"]
+    text = pr.get("text", "")
+    acc = pr.get("score", {}).get("accuracy", 0)
+    errors = pr.get("errors", {})
+    ref_url = pr.get("reference_audio_url", "")
+    stu_url = pr.get("student_audio_url", "")
+    acoustic = pr.get("acoustic")
+    fluency = pr.get("fluency")
+
+    n_sub = len(errors.get("substitutions", []))
+    n_del = len(errors.get("deletions", []))
+    n_ins = len(errors.get("insertions", []))
+
+    badges = ""
+    if n_sub:
+        badges += f'<span class="badge sub">替换 {n_sub}</span> '
+    if n_del:
+        badges += f'<span class="badge del">漏读 {n_del}</span> '
+    if n_ins:
+        badges += f'<span class="badge ins">多读 {n_ins}</span> '
+
+    acc_color = "#22c55e" if acc >= 80 else "#f59e0b" if acc >= 50 else "#ef4444"
+
+    # Acoustic/fluency badges
+    extra = ""
+    if acoustic:
+        extra += f'<span class="badge" style="background:#6366f1">🎵 声学{acoustic.get("similarity",0):.0f}%</span> '
+    if fluency:
+        extra += f'<span class="badge" style="background:#10b981">💨 流利{fluency.get("flow_score",0):.0f}%</span> '
+
+    marked = _marked_text_html(errors, text)
+    audio_block = _audio_html(ref_url, "原音", "🎧", "#667eea")
+    audio_block += _audio_html(stu_url, "跟读", "🎙️", "#f093fb")
+
+    return f"""<div class="page">
+  <div class="page-hd">
+    <div class="page-num">{pn}</div>
+    <div class="page-info">
+      <div class="page-acc" style="color:{acc_color}">{acc:.1f}%</div>
+      {badges}{extra}
+    </div>
+  </div>
+  <div class="page-body">
+    <div class="page-text">{marked}</div>
+    {audio_block}
+  </div>
+</div>"""
+
+
+def _training_html(training: list) -> str:
+    if not training:
+        return ""
+    blocks = ""
+    for t in training:
+        ttype = t.get("type", "")
+        title = t.get("title", "")
+        desc = t.get("description", "")
+
+        body = ""
+        if ttype == "final_sound":
+            words = t.get("words", [])
+            sentence = t.get("drill_sentence", "")
+            body = f"""<div class="train-desc">{desc}</div>
+            <div class="train-words">{"".join(f'<span class="tw">{w}</span>' for w in words)}</div>
+            <div class="train-sentence">📝 {sentence}</div>"""
+
+        elif ttype == "function_word":
+            words = t.get("words", [])
+            sentences = t.get("sentences", [])
+            body = f"""<div class="train-desc">{desc}</div>
+            <div class="train-words">{"".join(f'<span class="tw fw">{w["word"]}</span>' for w in words)}</div>"""
+            if sentences:
+                body += f"""<div class="train-sentences">{"".join(f'<div class="ts">🔊 {s}</div>' for s in sentences)}</div>"""
+
+        elif ttype == "tricky_words":
+            words = t.get("words", [])
+            body = f"""<div class="train-desc">{desc}</div>
+            <div class="train-grid">{"".join(
+                f'<div class="tw-card"><strong>{w["word"]}</strong><span class="tw-err">读成: {", ".join(w["errors"][:2])}</span><span class="tw-n">×{w["count"]}</span></div>'
+                for w in words
+            )}</div>"""
+
+        elif ttype == "minimal_pairs":
+            pairs = t.get("pairs", [])
+            body = f"""<div class="train-desc">{desc}</div>
+            <div class="train-grid">{"".join(
+                f'<div class="tp-card"><span class="tp-correct">✅ {p["correct"]}</span><span class="tp-wrong">❌ {p["wrong"]}</span><span class="tp-drill">{" · ".join(p["drills"][:6])}</span></div>'
+                for p in pairs
+            )}</div>"""
+
+        elif ttype == "deletion_alert":
+            words = t.get("words", [])
+            tip = t.get("tip", "")
+            body = f"""<div class="train-desc">{desc}</div>
+            <div class="train-words">{"".join(f'<span class="tw da">{w["word"]}</span>' for w in words)}</div>
+            <div class="train-tip">💡 {tip}</div>"""
+
+        blocks += f"""<div class="train-block">
+  <div class="train-title">{title}</div>
+  {body}
+</div>"""
+
+    return f"""<div class="card"><h3>🏋️ 专项训练</h3>{blocks}</div>"""
+
+
+def _disclaimer_html(disclaimer: str) -> str:
+    return f"""<div class="card disclaimer">
+  <h4>⚠️ 评分说明</h4>
+  <p>{disclaimer}</p>
+</div>"""
+
+
+# ── Main generators ──
 
 def generate_html(
     opus_info: dict,
     page_results: list,
     overall_score: dict,
     all_errors: dict,
+    six_dimension: dict,
+    classified_errors: dict,
+    training: list[dict],
     output_path: str | None = None,
 ) -> str:
-    """Generate an HTML evaluation report."""
     name = opus_info.get("name", "未知")
     book = opus_info.get("book_info", {}).get("pictureBookName", "未知")
     level = opus_info.get("book_info", {}).get("lowerLevelDesc", "")
     order = opus_info.get("opus_order", 0)
     abctime_score = opus_info.get("score", 0)
-
     ts = datetime.now()
+
     if not output_path:
-        safe = _safe_name(f"{name}_{book}")
+        safe = _safe(f"{name}_{book}")
         output_path = str(ReportConfig.dir / f"{safe}_{ts:%Y%m%d_%H%M%S}.html")
 
     acc = overall_score.get("accuracy", 0)
     total = overall_score.get("total_words", 0)
-    correct = overall_score.get("correct_count", 0)
-    n_sub = len(all_errors.get("substitutions", []))
-    n_del = len(all_errors.get("deletions", []))
-    n_ins = len(all_errors.get("insertions", []))
 
-    pages_html = "\n".join(_page_block(pr) for pr in page_results)
-    errors_html = _error_summary(all_errors)
+    # Build sections
+    banner = _banner_html(name, book, level, order, abctime_score, acc, total, ts)
+    score_card = _score_card_html(six_dimension["dimensions"])
+    result_badge = _pass_fail_html(six_dimension)
+    err_classified = _classified_errors_html(classified_errors)
+    pages = "\n".join(_page_block_html(pr) for pr in page_results)
+    training_sec = _training_html(training)
+    disclaimer = _disclaimer_html(six_dimension.get("disclaimer", ""))
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -137,65 +408,98 @@ def generate_html(
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>朗读评测报告 - {name}</title>
 <style>
-* {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif; background:#f5f7fa; color:#333; padding:16px; max-width:920px; margin:0 auto; }}
-.header {{ background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; border-radius:16px; padding:24px; margin-bottom:16px; }}
-.header h1 {{ font-size:22px; margin-bottom:6px; }}
-.header .meta {{ font-size:13px; opacity:.85; }}
-.score-overview {{ background:#fff; border-radius:16px; padding:20px; margin-bottom:16px; box-shadow:0 2px 12px rgba(0,0,0,.06); }}
-.score-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin-top:14px; }}
-.score-item {{ text-align:center; padding:14px 8px; background:#f8f9ff; border-radius:12px; }}
-.score-item .num {{ font-size:28px; font-weight:bold; color:#667eea; }}
-.score-item .label {{ font-size:12px; color:#999; margin-top:3px; }}
-.score-item .num.good {{ color:#22c55e; }}
-.score-item .num.ok {{ color:#eab308; }}
-.score-item .num.bad {{ color:#ef4444; }}
-.page-block {{ background:#fff; border-radius:12px; padding:14px 18px; margin-bottom:10px; box-shadow:0 1px 4px rgba(0,0,0,.05); border-left:4px solid #667eea; }}
-.page-header {{ display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }}
-.page-num {{ font-weight:bold; font-size:14px; }}
-.page-accuracy {{ margin-left:auto; font-size:12px; color:#666; white-space:nowrap; }}
-.badge {{ display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:bold; color:#fff; }}
-.badge-sub {{ background:#f59e0b; }}
-.badge-del {{ background:#ef4444; }}
-.badge-ins {{ background:#8b5cf6; }}
-.page-original,.page-marked {{ font-size:13px; line-height:1.6; margin-bottom:6px; color:#444; }}
-.page-marked {{ color:#555; }}
-.error-section {{ margin-top:6px; font-size:12px; color:#555; }}
-.word-error {{ color:#f59e0b; font-weight:bold; }}
-.word-wrong {{ color:#aaa; text-decoration:line-through; }}
-.word-deleted {{ color:#ef4444; text-decoration:line-through; }}
-.word-inserted {{ color:#8b5cf6; font-style:italic; }}
-.word-section {{ margin-top:18px; }}
-.word-section h3 {{ font-size:15px; margin-bottom:10px; }}
-.word-card {{ display:inline-block; padding:4px 10px; margin:3px; border-radius:8px; font-size:12px; background:#fef3c7; border:1px solid #f59e0b; }}
-.word-card.del-card {{ background:#fee2e2; border-color:#ef4444; }}
-.footer {{ text-align:center; color:#bbb; font-size:11px; margin-top:24px; }}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;color:#333;padding:0;max-width:420px;margin:0 auto;min-height:100vh}}
+.banner{{background:linear-gradient(135deg,#667eea 0%,#f093fb 50%,#f5576c 100%);padding:28px 20px 24px;position:relative;overflow:hidden}}
+.banner-stars{{position:absolute;top:12px;right:16px;font-size:20px;opacity:.4}}
+.banner-label{{font-size:11px;color:rgba(255,255,255,.6);letter-spacing:3px;margin-bottom:2px}}
+.banner-name{{font-size:26px;color:#fff;font-weight:700;line-height:1.2}}
+.banner-sub{{font-size:13px;color:rgba(255,255,255,.8);margin-top:2px}}
+.banner-flex{{display:flex;align-items:center;gap:16px;margin-top:14px}}
+.banner-side{{color:#fff}}
+.banner-big{{font-size:32px;font-weight:700;line-height:1}}
+.banner-sm{{font-size:11px;opacity:.7;margin-top:2px}}
+.banner-ts{{margin-top:10px;font-size:11px;color:rgba(255,255,255,.5)}}
+.content{{padding:10px 12px}}
+.card{{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 1px 6px rgba(0,0,0,.06)}}
+.card h3{{font-size:14px;color:#555;margin-bottom:10px;display:flex;align-items:center;gap:6px}}
+.card h4{{font-size:13px;color:#666;margin-bottom:6px}}
+.s-grid{{display:flex;flex-direction:column;gap:6px}}
+.s-row{{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #f5f5f5}}
+.s-row:last-child{{border-bottom:none}}
+.s-icon{{width:22px;text-align:center;font-size:13px}}
+.s-label{{flex:1;font-size:12px;color:#666}}
+.s-val{{font-size:13px;font-weight:600;white-space:nowrap;width:52px;text-align:right}}
+.result-pass,.result-fail{{text-align:center;padding:16px}}
+.result-pass{{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff}}
+.result-fail{{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}}
+.result-score{{font-size:40px;font-weight:700}}
+.result-label{{font-size:14px;margin-top:4px}}
+.result-detail{{font-size:11px;opacity:.7;margin-top:4px}}
+.err-grid{{display:flex;flex-direction:column;gap:8px}}
+.err-cat{{}}
+.err-cat-head{{display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:4px}}
+.err-cat-label{{font-weight:600;flex:1;font-size:12px;color:#444}}
+.err-cat-count{{font-size:11px;color:#999;background:#f5f5f5;padding:1px 8px;border-radius:8px}}
+.err-cat-tags{{display:flex;flex-wrap:wrap;gap:4px}}
+.wtag{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;border:1px solid}}
+.page{{background:#fff;border-radius:12px;margin-bottom:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.04)}}
+.page-hd{{display:flex;align-items:center;padding:10px 12px;gap:8px;border-bottom:1px solid #f0f0f0}}
+.page-num{{width:32px;height:32px;border-radius:50%;background:#eff6ff;color:#3b82f6;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0}}
+.page-info{{flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px}}
+.page-acc{{font-size:13px;font-weight:600;margin-right:4px}}
+.badge{{display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;color:#fff}}
+.badge.sub{{background:#f59e0b}}
+.badge.del{{background:#ef4444}}
+.badge.ins{{background:#8b5cf6}}
+.page-body{{padding:10px 12px}}
+.page-text{{font-size:13px;line-height:1.7;margin-bottom:8px;word-break:break-word}}
+.w-correct{{color:#333}}
+.w-err{{color:#f59e0b;font-weight:600}}
+.w-read{{color:#bbb;font-weight:400;font-size:11px;text-decoration:line-through;margin-left:2px}}
+.w-del{{color:#ef4444;text-decoration:line-through}}
+.ap{{border:1.5px solid;border-radius:10px;padding:6px 10px;margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
+.ap-icon{{font-size:14px}}
+.ap-label{{font-size:11px;color:#666;flex-shrink:0}}
+.ap audio{{flex:1;min-width:120px;height:32px;border-radius:6px}}
+.train-block{{margin-top:10px;padding-top:10px;border-top:1px solid #f0f0f0}}
+.train-block:first-child{{margin-top:0;padding-top:0;border-top:none}}
+.train-title{{font-size:13px;font-weight:600;color:#444;margin-bottom:6px}}
+.train-desc{{font-size:12px;color:#888;margin-bottom:6px}}
+.train-words{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}}
+.tw{{display:inline-block;padding:4px 10px;border-radius:14px;font-size:12px;background:#fef3c7;border:1px solid #f59e0b;color:#92400e}}
+.tw.fw{{background:#dbeafe;border-color:#3b82f6;color:#1e40af}}
+.tw.da{{background:#fee2e2;border-color:#ef4444;color:#991b1b}}
+.train-sentence{{font-size:12px;color:#666;background:#f9fafb;padding:8px;border-radius:8px;margin-top:4px;line-height:1.6}}
+.train-sentences{{margin-top:4px}}
+.ts{{font-size:12px;color:#666;padding:4px 0;line-height:1.5}}
+.train-grid{{display:flex;flex-direction:column;gap:6px}}
+.tw-card{{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#fef3c7;border-radius:10px;font-size:12px}}
+.tw-card strong{{color:#92400e}}
+.tw-err{{color:#bbb;font-size:11px;text-decoration:line-through;flex:1}}
+.tw-n{{color:#f59e0b;font-weight:700;font-size:11px}}
+.tp-card{{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f0fdf4;border-radius:10px;font-size:12px}}
+.tp-correct{{color:#22c55e;font-weight:600}}
+.tp-wrong{{color:#ef4444;font-weight:600}}
+.tp-drill{{color:#888;font-size:11px;flex:1}}
+.train-tip{{font-size:12px;color:#3b82f6;background:#eff6ff;padding:8px;border-radius:8px;margin-top:4px}}
+.disclaimer{{background:#fefce8;border:1px solid #fde68a}}
+.disclaimer p{{font-size:11px;color:#92400e;line-height:1.6}}
+.footer{{text-align:center;color:#bbb;font-size:10px;padding:16px 0}}
 </style>
 </head>
 <body>
-<div class="header">
-  <h1>📖 {name} 的朗读评测报告</h1>
-  <div class="meta">绘本: 《{book}》 | Level: {level} | 第 {order} 个作品</div>
-  <div class="meta" style="margin-top:4px">ABC Reading 评分: {abctime_score} 分 | 评测时间: {ts:%Y-%m-%d %H:%M}</div>
+{banner}
+<div class="content">
+{score_card}
+{result_badge}
+{err_classified}
+<h3 style="font-size:14px;color:#555;margin:10px 12px 6px;display:flex;align-items:center;gap:6px">📄 逐页分析</h3>
+{pages}
+{training_sec}
+{disclaimer}
+<div class="footer">ABC Reading Evaluator v3.0 · {ts:%Y-%m-%d %H:%M}</div>
 </div>
-
-<div class="score-overview">
-  <h2>📊 整体评分</h2>
-  <div class="score-grid">
-    <div class="score-item"><div class="num {'good' if acc>=80 else 'ok' if acc>=60 else 'bad'}">{acc:.1f}%</div><div class="label">单词准确率</div></div>
-    <div class="score-item"><div class="num">{correct}/{total}</div><div class="label">正确单词数</div></div>
-    <div class="score-item"><div class="num ok">{n_sub}</div><div class="label">读错(替换)</div></div>
-    <div class="score-item"><div class="num bad">{n_del}</div><div class="label">漏读</div></div>
-    <div class="score-item"><div class="num">{n_ins}</div><div class="label">多读</div></div>
-  </div>
-</div>
-
-{errors_html}
-
-<h2>📄 逐页分析</h2>
-{pages_html}
-
-<div class="footer">Generated by ABC Reading Evaluator v2.0 | {ts:%Y-%m-%d %H:%M:%S}</div>
 </body>
 </html>"""
 
@@ -210,37 +514,61 @@ def generate_json(
     page_results: list,
     overall_score: dict,
     all_errors: dict,
+    six_dimension: dict,
+    classified_errors: dict,
+    training: list[dict],
     output_path: str | None = None,
 ) -> str:
-    """Generate a JSON evaluation report."""
+    name = opus_info.get("name", "unknown")
+    book = opus_info.get("book_info", {}).get("pictureBookName", "unknown")
+    ts = datetime.now()
+
     if not output_path:
-        name = opus_info.get("name", "unknown")
-        book = opus_info.get("book_info", {}).get("pictureBookName", "unknown")
-        safe = _safe_name(f"{name}_{book}")
-        output_path = str(ReportConfig.dir / f"{safe}_{datetime.now():%Y%m%d_%H%M%S}.json")
+        safe = _safe(f"{name}_{book}")
+        output_path = str(ReportConfig.dir / f"{safe}_{ts:%Y%m%d_%H%M%S}.json")
+
+    # Build classified errors summary
+    classified_summary = {}
+    for cat, info in classified_errors.items():
+        if info:
+            classified_summary[cat] = {
+                "count": info["count"],
+                "unique_words": info["unique_words"],
+                "word_list": info["word_list"],
+            }
 
     report = {
         "meta": {
-            "student_name": opus_info.get("name", ""),
+            "student_name": name,
             "book_name": book,
             "book_level": opus_info.get("book_info", {}).get("lowerLevelDesc", ""),
             "opus_order": opus_info.get("opus_order", 0),
             "abctime_score": opus_info.get("score", 0),
             "total_pages": len(page_results),
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": ts.isoformat(),
+            "evaluator_version": "3.0",
         },
         "overall_score": overall_score,
-        "overall_errors": {
-            "substitutions": sorted(set(e["expected"] for e in all_errors.get("substitutions", []))),
-            "deletions": sorted(set(all_errors.get("deletions", []))),
-            "insertions": sorted(set(all_errors.get("insertions", []))),
-        },
+        "six_dimension": six_dimension,
+        "classified_errors": classified_summary,
+        "training": [
+            {
+                "type": str(t.get("type", "")),
+                "title": str(t.get("title", "")),
+                "description": str(t.get("description", "")),
+                "data": [],
+            }
+            for t in training
+        ],
         "page_results": [
             {
-                "page_num": pr["page_num"],
-                "text": pr.get("text", ""),
-                "score": pr.get("score", {}),
+                "page_num": int(pr["page_num"]),
+                "text": str(pr.get("text", "")),
+                "asr_text": str(pr.get("asr_text", "")),
+                "score": {k: float(v) if isinstance(v, (int, float)) else v for k, v in (pr.get("score") or {}).items()},
                 "errors": pr.get("errors", {}),
+                "acoustic": {k: float(v) if hasattr(v, "__float__") else v for k, v in (pr.get("acoustic") or {}).items()} if pr.get("acoustic") else None,
+                "fluency": {k: float(v) if hasattr(v, "__float__") else v for k, v in (pr.get("fluency") or {}).items()} if pr.get("fluency") else None,
             }
             for pr in page_results
         ],

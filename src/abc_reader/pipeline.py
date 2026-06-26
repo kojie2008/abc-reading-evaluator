@@ -1,7 +1,7 @@
 """
 Core pipeline orchestrator.
 
-Wires together: fetcher → downloader → ASR → comparator → reporter → publisher
+Wires together: fetcher → downloader → ASR → comparator → acoustic → reporter → publisher
 """
 
 import os
@@ -12,13 +12,13 @@ from .config import CDP_URL, ASR_MODEL, cleanup_data_dir
 from .fetcher import fetch_opus_data, extract_content_list
 from .downloader import download_all
 from .asr import convert_to_wav, transcribe
-from .comparator import compare, format_marked
+from .comparator import compare, format_marked, classify_errors, compute_six_dimensions, generate_training
+from .acoustic import acoustic_similarity, fluency_analysis
 from .reporter import generate_html, generate_json
 from .publisher import publish
 
 
 def _work_id(opus_info: dict) -> str:
-    """Generate a unique work identifier."""
     name = opus_info.get("name", "unknown")
     book = opus_info.get("book_info", {}).get("pictureBookName", "unknown")
     order = opus_info.get("opus_order", 0)
@@ -26,17 +26,9 @@ def _work_id(opus_info: dict) -> str:
 
 
 def _aggregate(page_results: list) -> tuple[dict, dict]:
-    """
-    Accumulate scores and errors across all pages.
-
-    Returns (overall_score, all_errors).
-    """
     total = {
-        "correct_count": 0,
-        "total_words": 0,
-        "substitution_count": 0,
-        "deletion_count": 0,
-        "insertion_count": 0,
+        "correct_count": 0, "total_words": 0,
+        "substitution_count": 0, "deletion_count": 0, "insertion_count": 0,
     }
     all_errors = {"substitutions": [], "deletions": [], "insertions": []}
 
@@ -49,30 +41,16 @@ def _aggregate(page_results: list) -> tuple[dict, dict]:
         all_errors["deletions"].extend(errs.get("deletions", []))
         all_errors["insertions"].extend(errs.get("insertions", []))
 
-    total_words = total["total_words"]
-    if total_words:
-        accuracy = round((total["correct_count"] / total_words) * 100, 2)
-        wer = round(
-            (
-                total["substitution_count"]
-                + total["deletion_count"]
-                + total["insertion_count"]
-            )
-            / total_words
-            * 100,
-            2,
-        )
+    tw = total["total_words"]
+    if tw:
+        accuracy = round((total["correct_count"] / tw) * 100, 2)
+        wer = round((total["substitution_count"] + total["deletion_count"] + total["insertion_count"]) / tw * 100, 2)
     else:
-        accuracy = 0.0
-        wer = 0.0
+        accuracy, wer = 0.0, 0.0
 
     overall = {
-        "accuracy": accuracy,
-        "wer": wer,
-        **total,
-        "student_word_count": sum(
-            pr.get("score", {}).get("student_word_count", 0) for pr in page_results
-        ),
+        "accuracy": accuracy, "wer": wer, **total,
+        "student_word_count": sum(pr.get("score", {}).get("student_word_count", 0) for pr in page_results),
     }
     return overall, all_errors
 
@@ -80,62 +58,59 @@ def _aggregate(page_results: list) -> tuple[dict, dict]:
 async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = False) -> dict:
     """
     Execute the full evaluation pipeline.
-
-    Args:
-        share_url: ABC Reading share link.
-        keep_audio: If False, delete downloaded audio after run.
-        skip_publish: If True, skip GitHub Pages upload.
-
-    Returns:
-        dict with keys: opus_info, page_results, overall_score, all_errors, reports
     """
     print("=" * 60)
-    print("  ABC Reading 学生朗读评测系统 v2")
+    print("  ABC Reading 学生朗读评测系统 v3")
     print("=" * 60)
 
     # ── 1. Fetch ──
-    print("\n[1/6] 📡 抓取作品数据…")
+    print("\n[1/7] 📡 抓取作品数据…")
     opus_info = await fetch_opus_data(CDP_URL, share_url)
     pages = extract_content_list(opus_info)
     wid = _work_id(opus_info)
-    print(f"  👤 {opus_info.get('name')}")
-    print(f"  📖 {opus_info['book_info']['pictureBookName']} "
-          f"(Level {opus_info['book_info']['lowerLevelDesc']})")
+    student_name = opus_info.get("name", "未知")
+    book_name = opus_info["book_info"]["pictureBookName"]
+    book_level = opus_info["book_info"]["lowerLevelDesc"]
+    print(f"  👤 {student_name}")
+    print(f"  📖 {book_name} (Level {book_level})")
     print(f"  📄 有效朗读页: {len(pages)}")
 
     # ── 2. Download ──
-    print(f"\n[2/6] ⬇️ 下载音频…")
+    print(f"\n[2/7] ⬇️ 下载音频…")
     audio_paths = download_all(pages, wid)
 
     # ── 3. Load ASR ──
-    print(f"\n[3/6] 🎤 加载 ASR 模型 ({ASR_MODEL})…")
+    print(f"\n[3/7] 🎤 加载 ASR 模型 ({ASR_MODEL})…")
     from .asr import get_model
     get_model()
 
     # ── 4 & 5. ASR + Compare ──
-    print(f"\n[4/6] 🎯 语音识别 + [5/6] 文本对比…")
+    print(f"\n[4/7] 🎯 语音识别 + [5/7] 文本对比…")
     page_results = []
     total_pages = len(pages)
+    skipped_pages = 0
+    all_texts = []
 
     for i, page in enumerate(pages, 1):
         pn = page["page_num"]
         text = page["text"]
+        all_texts.append(text)
         stu = audio_paths.get(pn, {}).get("student", "")
+        ref = audio_paths.get(pn, {}).get("reference", "")
 
         if not stu or not os.path.exists(stu):
             print(f"\n  [{i}/{total_pages}] 第{pn}页: ⚠️ 无学生音频，跳过")
+            skipped_pages += 1
             page_results.append({
-                "page_num": pn,
-                "text": text,
-                "asr_text": "",
-                "score": {
-                    "accuracy": 0, "wer": 0,
-                    "correct_count": 0, "substitution_count": 0,
-                    "deletion_count": 0, "insertion_count": 0,
-                    "total_words": 0, "student_word_count": 0,
-                },
+                "page_num": pn, "text": text, "asr_text": "",
+                "student_audio_path": stu, "reference_audio_path": ref,
+                "student_audio_url": page.get("student_audio_url", ""),
+                "reference_audio_url": page.get("reference_audio_url", ""),
+                "score": {"accuracy": 0, "wer": 0, "correct_count": 0,
+                          "substitution_count": 0, "deletion_count": 0,
+                          "insertion_count": 0, "total_words": 0, "student_word_count": 0},
                 "errors": {"substitutions": [], "deletions": [], "insertions": []},
-                "marked_text": "",
+                "marked_text": "", "acoustic": None, "fluency": None,
             })
             continue
 
@@ -150,22 +125,92 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
         print(f"词数: {sc.get('student_word_count', 0)}, "
               f"准确率: {sc.get('accuracy', 0):.1f}%")
 
+        # ── Acoustic analysis ──
+        acoustic = None
+        fluency = None
+        if os.path.exists(ref):
+            try:
+                print(f"  [{i}/{total_pages}] 第{pn}页: 🎵 声学分析…", end=" ", flush=True)
+                acoustic = acoustic_similarity(wav, ref)
+                fluency = fluency_analysis(wav, ref, text)
+                print(f"相似度 {acoustic.get('similarity', 0)}%, "
+                      f"流利度 {fluency.get('flow_score', 0)}%")
+            except Exception as e:
+                print(f"⚠️ 声学分析失败: {e}")
+
         page_results.append({
-            "page_num": pn,
-            "text": text,
-            "asr_text": asr_text,
+            "page_num": pn, "text": text, "asr_text": asr_text,
+            "student_audio_path": stu, "reference_audio_path": ref,
+            "student_audio_url": page.get("student_audio_url", ""),
+            "reference_audio_url": page.get("reference_audio_url", ""),
             "score": sc,
             "errors": comp["errors"],
             "marked_text": marked,
+            "acoustic": acoustic,
+            "fluency": fluency,
         })
 
     # ── Aggregate ──
     overall_score, all_errors = _aggregate(page_results)
 
-    # ── 6. Report ──
-    print(f"\n[6/6] 📝 生成评测报告…")
-    html_path = generate_html(opus_info, page_results, overall_score, all_errors)
-    json_path = generate_json(opus_info, page_results, overall_score, all_errors)
+    # ── Error classification ──
+    print(f"\n[6/7] 📊 错误分类 & 评分…")
+    classified = classify_errors(all_errors["substitutions"])
+
+    # Compute six-dimension score
+    six_dim = compute_six_dimensions(
+        overall_score, classified,
+        all_errors["substitutions"],
+        all_errors["deletions"],
+        all_errors["insertions"],
+        total_pages, skipped_pages,
+    )
+
+    # Override pronunciation with acoustic similarity if available
+    acoustic_sims = [pr["acoustic"]["similarity"] for pr in page_results
+                     if pr.get("acoustic")]
+    fluency_scores = [pr["fluency"]["flow_score"] for pr in page_results
+                      if pr.get("fluency")]
+
+    if acoustic_sims:
+        avg_acoustic = sum(acoustic_sims) / len(acoustic_sims)
+        # Blend: 60% ASR text accuracy + 40% acoustic similarity
+        blended_pron = overall_score["accuracy"] * 0.6 + avg_acoustic * 0.4
+        six_dim["dimensions"]["pronunciation"]["score"] = round(blended_pron / 100 * 30, 1)
+        six_dim["dimensions"]["pronunciation"]["acoustic_avg"] = round(avg_acoustic, 1)
+
+    if fluency_scores:
+        avg_fluency = sum(fluency_scores) / len(fluency_scores)
+        # Use fluency score for the pausing dimension
+        six_dim["dimensions"]["pausing"]["score"] = round(avg_fluency / 100 * 15, 1)
+        six_dim["dimensions"]["pausing"]["fluency_avg"] = round(avg_fluency, 1)
+
+    # Recalculate total
+    six_dim["total"] = round(sum(
+        d["score"] for d in six_dim["dimensions"].values()
+    ), 1)
+    six_dim["passed"] = six_dim["total"] >= 60 and (
+        six_dim["dimensions"]["pronunciation"]["score"] +
+        six_dim["dimensions"]["final_sound"]["score"]
+    ) >= 18
+
+    # Generate training material
+    training = generate_training(
+        classified, all_errors["substitutions"],
+        all_errors["deletions"], all_errors["insertions"],
+        all_texts,
+    )
+
+    # ── 7. Report ──
+    print(f"\n[7/7] 📝 生成评测报告…")
+    html_path = generate_html(
+        opus_info, page_results, overall_score, all_errors,
+        six_dim, classified, training,
+    )
+    json_path = generate_json(
+        opus_info, page_results, overall_score, all_errors,
+        six_dim, classified, training,
+    )
 
     # ── Summary ──
     print(f"\n{'=' * 60}")
@@ -178,6 +223,8 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
           f"漏读: {overall_score['deletion_count']} | "
           f"多读: {overall_score['insertion_count']}")
     print(f"  🎯 单词准确率: {overall_score['accuracy']:.1f}%")
+    print(f"  📊 六维评分: {six_dim['total']}/{six_dim['max_total']} "
+          f"{'✅通过' if six_dim['passed'] else '❌未通过'}")
     print(f"{'=' * 60}")
 
     result = {
@@ -185,6 +232,9 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
         "page_results": page_results,
         "overall_score": overall_score,
         "all_errors": all_errors,
+        "six_dimension": six_dim,
+        "classified_errors": classified,
+        "training": training,
         "reports": {"html": html_path, "json": json_path},
     }
 
@@ -196,7 +246,6 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
             print(f"  🔗 永久链接: {pub_result['url']}")
         result["public_url"] = pub_result.get("url")
 
-    # ── Cleanup ──
     if not keep_audio:
         cleanup_data_dir()
 

@@ -40,7 +40,7 @@ def _api_put(path_in_repo: str, content_b64: str, token: str) -> dict:
     except Exception:
         pass  # File doesn't exist yet — good
 
-    body = json.dumps(data).encode()
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=headers, method="PUT")
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())
@@ -62,7 +62,7 @@ def publish(local_path: str) -> dict:
         return {"ok": False, "url": None, "error": "未配置 GITHUB_TOKEN"}
 
     safe_name = _safe_basename(local_path)
-    b64 = base64.b64encode(path.read_bytes()).decode()
+    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
 
     # Build pages URL
     username, reponame = GITHUB_REPO.split("/", 1)
