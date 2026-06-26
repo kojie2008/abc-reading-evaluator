@@ -147,6 +147,105 @@ def _banner_html(name: str, book: str, level: str, order: int, abctime_score: in
 </div>"""
 
 
+# ── 维度点评文案 ──
+
+_DIM_COMMENTS = {
+    "pronunciation": {
+        "good": "发音清晰准确，单词读得很到位",
+        "ok": "大部分发音正确，个别单词需要再听一下原音",
+        "poor": "发音需要加强，建议多听原音跟读，注意每个单词的准确发音",
+        "label": "发音准确率",
+    },
+    "final_sound": {
+        "good": "尾音保留得很好，-ed、-s 词尾都能正确发音",
+        "ok": "部分尾音有遗漏，注意句子末尾单词的尾部发音",
+        "poor": "尾音遗漏较多，需要重点练习词尾 -ed、-s/es 的发音",
+        "label": "尾音保留",
+    },
+    "stress": {
+        "good": "单词重音把握准确，多音节词读得自然流畅",
+        "ok": "部分多音节词的重音位置需要调整，多听原音模仿",
+        "poor": "重音位置需要重点练习，建议用带音标标注的单词表反复练习",
+        "label": "单词重音",
+    },
+    "pausing": {
+        "good": "停顿节奏自然，标点符号处的停顿和语调控制得当",
+        "ok": "停顿意识还可以加强，注意句号和逗号处的适当停顿",
+        "poor": "需要在标点处多练习停顿，读的时候可以试着用手指点读",
+        "label": "停顿意识",
+    },
+    "clarity": {
+        "good": "声音洪亮清晰，每个单词都读得很清楚",
+        "ok": "整体清晰度不错，有些单词可以读得再用力一些",
+        "poor": "音量偏小或个别字含糊，鼓励大声朗读、字正腔圆",
+        "label": "音量清晰度",
+    },
+    "completeness": {
+        "good": "朗读完整，没有漏页漏行的情况",
+        "ok": "大部分页面都读了，偶尔跳了几页",
+        "poor": "漏读页数较多，建议逐页完成，不着急翻页",
+        "label": "朗读完整性",
+    },
+}
+
+
+def _dimension_comment(dim_name: str, pct: float) -> str:
+    cmt = _DIM_COMMENTS.get(dim_name, {})
+    if pct >= 80:
+        return cmt.get("good", "")
+    elif pct >= 50:
+        return cmt.get("ok", "")
+    else:
+        return cmt.get("poor", "")
+
+
+def _training_suggestions(six: dict) -> str:
+    """基于六维评分生成综合提升建议（3条）。"""
+    dims = six.get("dimensions", {})
+    suggestions = []
+
+    # 按得分比例从低到高排序
+    dim_order = [
+        ("pronunciation", "发音", "多听原音跟读，用自然拼读法记单词"),
+        ("final_sound", "尾音", "着重练习 -ed/-s/-ing 词尾的发音，放慢语速把尾音读清楚"),
+        ("stress", "重音", "用词典查多音节词的重音位置，标出重读音节再朗读"),
+        ("pausing", "停顿", "朗读时注意句号和逗号，读到标点处稍作停顿换气"),
+        ("clarity","清晰度","鼓励大声朗读，每个单词发音到位，避免含糊吞音"),
+        ("completeness","完整性","逐页完成朗读，不跳页不漏行"),
+    ]
+
+    # 找到最弱的3个维度
+    scored = []
+    for key, label, tip in dim_order:
+        d = dims.get(key)
+        if d and d["max"] > 0:
+            pct = d["score"] / d["max"] * 100
+            scored.append((pct, key, label, tip))
+    scored.sort(key=lambda x: x[0])
+
+    # 总分不足60，加一条整体建议
+    total = six.get("total", 0)
+    if total < 60:
+        suggestions.append(
+            f"<div class='tip-row'><span class='tip-badge'>💪</span><span class='tip-text'><strong>整体建议</strong>：总分未达标，建议每天朗读15-20分钟，先听原音再跟读，重点关注发音和尾音</span></div>"
+        )
+
+    for i, (pct, key, label, tip) in enumerate(scored[:3]):
+        if pct < 75:
+            suggestions.append(
+                f"<div class='tip-row'><span class='tip-badge tip-{i+1}'>{'①②③'[i]}</span><span class='tip-text'><strong>{label}</strong>：{tip}</span></div>"
+            )
+
+    if not suggestions:
+        suggestions.append(
+            "<div class='tip-row'><span class='tip-badge'>🎉</span><span class='tip-text'>表现很棒！继续保持，可以尝试更难级别的绘本</span></div>"
+        )
+
+    return f"""<div class="card"><h3>📈 综合提升建议</h3>
+  {"".join(suggestions)}
+</div>"""
+
+
 def _score_card_html(dims: dict) -> str:
     rows = ""
     for k in ["pronunciation", "final_sound", "stress", "pausing", "clarity", "completeness"]:
@@ -154,11 +253,19 @@ def _score_card_html(dims: dict) -> str:
         pct = d["score"] / d["max"] * 100
         color = "#22c55e" if pct >= 80 else "#f59e0b" if pct >= 50 else "#ef4444"
         icon = d.get("icon", "📊")
+        comment = _dimension_comment(k, pct)
         rows += f"""<div class="s-row">
-  <span class="s-icon">{icon}</span>
-  <span class="s-label">{d['label']}</span>
-  <span class="s-val" style="color:{color}">{d['score']:.1f}/{d['max']}</span>
-  {_bar(70, 6, pct, color)}
+  <div class="s-head">
+    <span class="s-icon">{icon}</span>
+    <span class="s-label">{d['label']}</span>
+  </div>
+  <div class="s-body">
+    <div class="s-barline">
+      <span class="s-val" style="color:{color}">{d['score']:.1f}/{d['max']}</span>
+      {_bar(70, 6, pct, color)}
+    </div>
+    <div class="s-comment" style="color:{color}">{comment}</div>
+  </div>
 </div>"""
     return f"""<div class="card"><h3>📊 六维评分</h3>
   <div class="s-grid">{rows}</div>
@@ -168,10 +275,11 @@ def _score_card_html(dims: dict) -> str:
 def _pass_fail_html(six: dict) -> str:
     cls = "pass" if six["passed"] else "fail"
     label = "✅ 达到推荐标准" if six["passed"] else "❌ 未达到推荐标准"
+    detail = six.get("pass_detail", "通过条件: 总分≥60 且 发音+尾音≥18/50")
     return f"""<div class="card result-{cls}">
   <div class="result-score">{six['total']:.0f}<span style="font-size:14px;color:rgba(255,255,255,0.7)">/100</span></div>
   <div class="result-label">{label}</div>
-  <div class="result-detail">通过条件: 总分≥60 且 发音+尾音≥18/50</div>
+  <div class="result-detail">{detail}</div>
 </div>"""
 
 
@@ -396,6 +504,7 @@ def generate_html(
     banner = _banner_html(name, book, level, order, abctime_score, acc, total, ts)
     score_card = _score_card_html(six_dimension["dimensions"])
     result_badge = _pass_fail_html(six_dimension)
+    training_suggestions = _training_suggestions(six_dimension)
     err_classified = _classified_errors_html(classified_errors)
     pages = "\n".join(_page_block_html(pr) for pr in page_results)
     training_sec = _training_html(training)
@@ -424,12 +533,24 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 .card{{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 1px 6px rgba(0,0,0,.06)}}
 .card h3{{font-size:14px;color:#555;margin-bottom:10px;display:flex;align-items:center;gap:6px}}
 .card h4{{font-size:13px;color:#666;margin-bottom:6px}}
-.s-grid{{display:flex;flex-direction:column;gap:6px}}
-.s-row{{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #f5f5f5}}
+.s-grid{{display:flex;flex-direction:column;gap:8px}}
+.s-row{{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px solid #f5f5f5}}
 .s-row:last-child{{border-bottom:none}}
+.s-head{{display:flex;align-items:center;gap:6px}}
 .s-icon{{width:22px;text-align:center;font-size:13px}}
-.s-label{{flex:1;font-size:12px;color:#666}}
-.s-val{{font-size:13px;font-weight:600;white-space:nowrap;width:52px;text-align:right}}
+.s-label{{font-size:12px;color:#666;font-weight:600}}
+.s-body{{display:flex;flex-direction:column;gap:1px}}
+.s-barline{{display:flex;align-items:center;gap:6px}}
+.s-val{{font-size:13px;font-weight:600;white-space:nowrap;width:52px;text-align:right;flex-shrink:0}}
+.s-comment{{font-size:11px;line-height:1.4;padding-left:28px}}
+.tip-row{{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #f5f5f5}}
+.tip-row:last-child{{border-bottom:none}}
+.tip-badge{{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f0f2f5;font-size:11px;font-weight:700;flex-shrink:0}}
+.tip-1{{background:#fee2e2;color:#ef4444}}
+.tip-2{{background:#fef3c7;color:#f59e0b}}
+.tip-3{{background:#dbeafe;color:#3b82f6}}
+.tip-text{{font-size:12px;line-height:1.5;color:#555}}
+.tip-text strong{{color:#333}}
 .result-pass,.result-fail{{text-align:center;padding:16px}}
 .result-pass{{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff}}
 .result-fail{{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}}
@@ -493,6 +614,7 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 <div class="content">
 {score_card}
 {result_badge}
+{training_suggestions}
 {err_classified}
 <h3 style="font-size:14px;color:#555;margin:10px 12px 6px;display:flex;align-items:center;gap:6px">📄 逐页分析</h3>
 {pages}
