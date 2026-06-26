@@ -57,8 +57,8 @@ def _bar(w: int, h: int, pct: float, color: str) -> str:
 
 
 def _radar_svg(scores: dict, size: int = 260) -> str:
-    """Six-dimension radar chart SVG."""
-    dims = ["pronunciation", "final_sound", "stress", "pausing", "clarity", "completeness"]
+    """Five-dimension radar chart SVG."""
+    dims = ["pronunciation", "final_sound", "pausing", "clarity", "completeness"]
     labels = [scores[d]["label"] for d in dims]
     values = [scores[d]["score"] / scores[d]["max"] * 100 for d in dims]
     colors = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#8b5cf6"]
@@ -162,12 +162,6 @@ _DIM_COMMENTS = {
         "poor": "尾音遗漏较多，需要重点练习词尾 -ed、-s/es 的发音",
         "label": "尾音保留",
     },
-    "stress": {
-        "good": "单词重音把握准确，多音节词读得自然流畅",
-        "ok": "部分多音节词的重音位置需要调整，多听原音模仿",
-        "poor": "重音位置需要重点练习，建议用带音标标注的单词表反复练习",
-        "label": "单词重音",
-    },
     "pausing": {
         "good": "停顿节奏自然，标点符号处的停顿和语调控制得当",
         "ok": "停顿意识还可以加强，注意句号和逗号处的适当停顿",
@@ -208,7 +202,6 @@ def _training_suggestions(six: dict) -> str:
     dim_order = [
         ("pronunciation", "发音", "多听原音跟读，用自然拼读法记单词"),
         ("final_sound", "尾音", "着重练习 -ed/-s/-ing 词尾的发音，放慢语速把尾音读清楚"),
-        ("stress", "重音", "用词典查多音节词的重音位置，标出重读音节再朗读"),
         ("pausing", "停顿", "朗读时注意句号和逗号，读到标点处稍作停顿换气"),
         ("clarity","清晰度","鼓励大声朗读，每个单词发音到位，避免含糊吞音"),
         ("completeness","完整性","逐页完成朗读，不跳页不漏行"),
@@ -248,7 +241,7 @@ def _training_suggestions(six: dict) -> str:
 
 def _score_card_html(dims: dict) -> str:
     rows = ""
-    for k in ["pronunciation", "final_sound", "stress", "pausing", "clarity", "completeness"]:
+    for k in ["pronunciation", "final_sound", "pausing", "clarity", "completeness"]:
         d = dims[k]
         pct = d["score"] / d["max"] * 100
         color = "#22c55e" if pct >= 80 else "#f59e0b" if pct >= 50 else "#ef4444"
@@ -275,7 +268,7 @@ def _score_card_html(dims: dict) -> str:
 def _pass_fail_html(six: dict) -> str:
     cls = "pass" if six["passed"] else "fail"
     label = "✅ 达到推荐标准" if six["passed"] else "❌ 未达到推荐标准"
-    detail = six.get("pass_detail", "通过条件: 总分≥60 且 发音+尾音≥18/50")
+    detail = six.get("pass_detail", "五维综合评分，满分100分")
     return f"""<div class="card result-{cls}">
   <div class="result-score">{six['total']:.0f}<span style="font-size:14px;color:rgba(255,255,255,0.7)">/100</span></div>
   <div class="result-label">{label}</div>
@@ -700,3 +693,57 @@ def generate_json(
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     return output_path
+
+
+def generate_friendly_summary(
+    opus_info: dict,
+    overall_score: dict,
+    six_dimension: dict,
+    report_url: str = "",
+) -> str:
+    """生成可直接发朋友圈的鼓励型文案。"""
+    name = opus_info.get("name", "宝贝")
+    book = opus_info.get("book_info", {}).get("pictureBookName", "")
+    level = opus_info.get("book_info", {}).get("lowerLevelDesc", "")
+    ts = datetime.now()
+    acc = overall_score.get("accuracy", 0)
+    total = overall_score.get("total_words", 0)
+    correct = overall_score.get("correct_count", 0)
+    total_score = six_dimension.get("total", 0)
+
+    # 鼓励型评价
+    if total_score >= 80:
+        compliment = "读得太棒了！发音标准，流利自然，继续加油！🎉"
+    elif total_score >= 60:
+        compliment = "读得很不错！大部分单词都读对了，继续坚持练习会越来越好！👍"
+    elif total_score >= 40:
+        compliment = "有进步哦！今天比昨天多认识了不少单词，每天读一点，积少成多！💪"
+    else:
+        compliment = "敢于开口就是最大的进步！多听原音慢慢跟读，每一遍都比上一遍好！🌟"
+
+    # 亮点
+    dims = six_dimension.get("dimensions", {})
+    strengths = []
+    for key, label in [("pronunciation","发音"), ("pausing","流利度"), ("clarity","清晰度"), ("completeness","完整性")]:
+        d = dims.get(key)
+        if d and d["max"] > 0 and d["score"] / d["max"] * 100 >= 60:
+            strengths.append(label)
+    strength_text = "、".join(strengths) if strengths else "敢于开口"
+
+    lines = [
+        f"📚 {name} 的英语朗读打卡",
+        "",
+        f"今天读了《{book}》（Level {level}）",
+        f"✅ {total}个单词中读对了{correct}个",
+        f"五维综合评分: {total_score:.0f}/100",
+        f"可圈可点：{strength_text}",
+        "",
+        compliment,
+        "",
+        "每天一点点，进步看得见 💕",
+    ]
+    if report_url:
+        lines.extend(["", f"🔗 完整报告: {report_url}"])
+
+    lines.append(f"{ts:%m/%d %H:%M}")
+    return "\n".join(lines)
