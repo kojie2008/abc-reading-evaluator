@@ -1,19 +1,6 @@
 """
 Report generation for ABC Reading Evaluator v3.0.
-
-Generates:
-  - HTML report (mobile-first, WeChat-friendly, self-contained)
-  - JSON report (structured data for downstream processing)
-
-Features:
-  - Award-certificate style banner with ring progress
-  - Six-dimension scoring with SVG radar chart
-  - Error classification with color-coded word clouds
-  - Per-page analysis with dual audio players
-  - Targeted training material generation
-  - Disclaimer
 """
-
 import json
 import re
 from datetime import datetime
@@ -24,108 +11,10 @@ from .config import ReportConfig
 
 
 def _safe(text: str) -> str:
-    """Convert to safe ASCII filename."""
     s = re.sub(r"[^\x20-\x7E]", "", text).strip().replace(" ", "_")
     s = re.sub(r"_+", "_", s).strip("_")
     return s or "report"
 
-
-# ── SVG helpers ──
-
-def _ring_svg(percent: float, size: int = 120, stroke: int = 8) -> str:
-    """Circular progress ring SVG."""
-    r = (size - stroke) / 2
-    cx = cy = size / 2
-    circ = 2 * 3.14159 * r
-    offset = circ * (1 - percent / 100)
-    return f"""<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
-  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="{stroke}"/>
-  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#fff" stroke-width="{stroke}"
-    stroke-linecap="round" stroke-dasharray="{circ}" stroke-dashoffset="{offset}"
-    transform="rotate(-90, {cx}, {cy})"/>
-  <text x="{cx}" y="{cy - 2}" text-anchor="middle" fill="#fff" font-size="{size * 0.22}" font-weight="bold">{percent:.0f}%</text>
-  <text x="{cx}" y="{cy + 16}" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="{size * 0.1}">准确率</text>
-</svg>"""
-
-
-def _bar(w: int, h: int, pct: float, color: str) -> str:
-    """Simple progress bar SVG."""
-    return f"""<svg width="{w}" height="{h}" style="vertical-align:middle;border-radius:{h/2}px">
-  <rect width="{w}" height="{h}" rx="{h/2}" fill="#e5e7eb"/>
-  <rect width="{int(w * pct / 100)}" height="{h}" rx="{h/2}" fill="{color}"/>
-</svg>"""
-
-
-def _radar_svg(scores: dict, size: int = 260) -> str:
-    """Five-dimension radar chart SVG."""
-    dims = ["pronunciation", "final_sound", "pausing", "clarity", "completeness"]
-    labels = [scores[d]["label"] for d in dims]
-    values = [scores[d]["score"] / scores[d]["max"] * 100 for d in dims]
-    colors = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#8b5cf6"]
-
-    cx = cy = size / 2
-    r = size * 0.38
-    n = len(dims)
-    angle_step = 2 * 3.14159 / n
-    # Rotate so first axis is at top
-    start_angle = -3.14159 / 2
-
-    # Grid rings
-    rings = ""
-    for level in [25, 50, 75, 100]:
-        lr = r * level / 100
-        pts = " ".join(
-            f"{cx + lr * (a := start_angle + i * angle_step)}"
-            f",{cy + lr * (b := (start_angle + i * angle_step))}"
-            for i in range(n + 1)
-        )
-        rings += f'<polygon points="{pts}" fill="none" stroke="#e5e7eb" stroke-width="1"/>'
-
-    # Axes
-    axes = ""
-    for i in range(n):
-        xe = cx + r * (a := start_angle + i * angle_step) if False else cx + r
-        xe = cx + r
-        ye = cy + r
-        xe = cx + r * (a := (start_angle + i * angle_step))
-        ye = cy + r * (a := (start_angle + i * angle_step))
-        # Simplify: just draw lines
-        pass
-
-    axes = ""
-    for i in range(n):
-        ang = start_angle + i * angle_step
-        xe = cx + r * (ang := start_angle + i * angle_step)
-        ye = cy + r * (ang := start_angle + i * angle_step)
-        axes += f'<line x1="{cx}" y1="{cy}" x2="{xe}" y2="{ye}" stroke="#d1d5db" stroke-width="1"/>'
-        # Label
-        lx = cx + (r + 22) * (ang := start_angle + i * angle_step)
-        ly = cy + (r + 22) * (ang := start_angle + i * angle_step)
-        axes += f'<text x="{lx}" y="{ly}" text-anchor="middle" font-size="10" fill="#666">{labels[i]}</text>'
-
-    ang = start_angle + i * angle_step
-
-    # Data polygon
-    pts = ""
-    for i in range(n):
-        ang = start_angle + i * angle_step
-        vr = r * min(values[i] / 100, 1)
-        x = cx + vr * (ang := start_angle + i * angle_step)
-        y = cy + vr * (ang := start_angle + i * angle_step)
-        pts += f"{x},{y} "
-    # Close
-    ang0 = start_angle
-    vr0 = r * min(values[0] / 100, 1)
-    pts += f"{cx + vr0 * (ang0 := start_angle)},{cy + vr0 * (ang0 := start_angle)}"
-
-    return f"""<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
-  {rings}
-  {axes}
-  <polygon points="{pts}" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>
-</svg>"""
-
-
-# ── Builders ──
 
 def _banner_html(name: str, book: str, level: str, order: int, abctime_score: int,
                  accuracy: float, total_words: int, ts: datetime) -> str:
@@ -147,37 +36,57 @@ def _banner_html(name: str, book: str, level: str, order: int, abctime_score: in
 </div>"""
 
 
-# ── 维度点评文案 ──
+def _ring_svg(percent: float, size: int = 120, stroke: int = 8) -> str:
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circ = 2 * 3.14159 * r
+    offset = circ * (1 - percent / 100)
+    return f"""<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="{stroke}"/>
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#fff" stroke-width="{stroke}"
+    stroke-linecap="round" stroke-dasharray="{circ}" stroke-dashoffset="{offset}"
+    transform="rotate(-90, {cx}, {cy})"/>
+  <text x="{cx}" y="{cy - 2}" text-anchor="middle" fill="#fff" font-size="{size * 0.22}" font-weight="bold">{percent:.0f}%</text>
+  <text x="{cx}" y="{cy + 16}" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="{size * 0.1}">准确率</text>
+</svg>"""
+
+
+def _bar(w: int, h: int, pct: float, color: str) -> str:
+    return f"""<svg width="{w}" height="{h}" style="vertical-align:middle;border-radius:{h/2}px">
+  <rect width="{w}" height="{h}" rx="{h/2}" fill="#e5e7eb"/>
+  <rect width="{int(w * pct / 100)}" height="{h}" rx="{h/2}" fill="{color}"/>
+</svg>"""
+
 
 _DIM_COMMENTS = {
     "pronunciation": {
         "good": "发音清晰准确，单词读得很到位",
         "ok": "大部分发音正确，个别单词需要再听一下原音",
-        "poor": "发音需要加强，建议多听原音跟读，注意每个单词的准确发音",
+        "poor": "发音需要加强，建议多听原音跟读",
         "label": "发音准确率",
     },
     "final_sound": {
         "good": "尾音保留得很好，-ed、-s 词尾都能正确发音",
         "ok": "部分尾音有遗漏，注意句子末尾单词的尾部发音",
-        "poor": "尾音遗漏较多，需要重点练习词尾 -ed、-s/es 的发音",
+        "poor": "尾音遗漏较多，重点练习 -ed/-s/-ing 词尾",
         "label": "尾音保留",
     },
     "pausing": {
-        "good": "停顿节奏自然，标点符号处的停顿和语调控制得当",
-        "ok": "停顿意识还可以加强，注意句号和逗号处的适当停顿",
-        "poor": "需要在标点处多练习停顿，读的时候可以试着用手指点读",
-        "label": "停顿意识",
+        "good": "朗读节奏自然流畅",
+        "ok": "注意标点符号处的适当停顿",
+        "poor": "需要多注意句号和逗号处的停顿",
+        "label": "流畅性",
     },
     "clarity": {
-        "good": "声音洪亮清晰，每个单词都读得很清楚",
-        "ok": "整体清晰度不错，有些单词可以读得再用力一些",
-        "poor": "音量偏小或个别字含糊，鼓励大声朗读、字正腔圆",
+        "good": "声音洪亮，每个单词都读得很清楚",
+        "ok": "整体清晰度不错，继续加油",
+        "poor": "鼓励大声朗读，字正腔圆",
         "label": "音量清晰度",
     },
     "completeness": {
-        "good": "朗读完整，没有漏页漏行的情况",
-        "ok": "大部分页面都读了，偶尔跳了几页",
-        "poor": "漏读页数较多，建议逐页完成，不着急翻页",
+        "good": "朗读完整，没有漏页漏行",
+        "ok": "大部分页面都读了",
+        "poor": "建议逐页完成朗读",
         "label": "朗读完整性",
     },
 }
@@ -194,20 +103,15 @@ def _dimension_comment(dim_name: str, pct: float) -> str:
 
 
 def _training_suggestions(six: dict) -> str:
-    """基于五维评分生成综合提升建议（3条）。"""
     dims = six.get("dimensions", {})
     suggestions = []
-
-    # 按得分比例从低到高排序
     dim_order = [
         ("pronunciation", "发音", "多听原音跟读，用自然拼读法记单词"),
-        ("final_sound", "尾音", "着重练习 -ed/-s/-ing 词尾的发音，放慢语速把尾音读清楚"),
-        ("pausing", "停顿", "朗读时注意句号和逗号，读到标点处稍作停顿换气"),
-        ("clarity","清晰度","鼓励大声朗读，每个单词发音到位，避免含糊吞音"),
-        ("completeness","完整性","逐页完成朗读，不跳页不漏行"),
+        ("final_sound", "尾音", "放慢语速把尾音读清楚"),
+        ("pausing", "停顿", "朗读时注意句号和逗号的停顿"),
+        ("clarity", "清晰度", "鼓励大声朗读，避免含糊吞音"),
+        ("completeness", "完整性", "逐页完成朗读，不跳页不漏行"),
     ]
-
-    # 找到最弱的3个维度
     scored = []
     for key, label, tip in dim_order:
         d = dims.get(key)
@@ -215,25 +119,21 @@ def _training_suggestions(six: dict) -> str:
             pct = d["score"] / d["max"] * 100
             scored.append((pct, key, label, tip))
     scored.sort(key=lambda x: x[0])
-
-    # 总分不足60，加一条整体建议
     total = six.get("total", 0)
     if total < 60:
         suggestions.append(
-            f"<div class='tip-row'><span class='tip-badge'>💪</span><span class='tip-text'><strong>整体建议</strong>：总分未达标，建议每天朗读15-20分钟，先听原音再跟读，重点关注发音和尾音</span></div>"
+            "<div class='tip-row'><span class='tip-badge'>💪</span><span class='tip-text'><strong>整体建议</strong>：建议每天朗读15-20分钟，先听原音再跟读</span></div>"
         )
-
     for i, (pct, key, label, tip) in enumerate(scored[:3]):
         if pct < 75:
+            emoji = "①②③④⑤"[i]
             suggestions.append(
-                f"<div class='tip-row'><span class='tip-badge tip-{i+1}'>{'①②③'[i]}</span><span class='tip-text'><strong>{label}</strong>：{tip}</span></div>"
+                f"<div class='tip-row'><span class='tip-badge tip-{i+1}'>{emoji}</span><span class='tip-text'><strong>{label}</strong>：{tip}</span></div>"
             )
-
     if not suggestions:
         suggestions.append(
-            "<div class='tip-row'><span class='tip-badge'>🎉</span><span class='tip-text'>表现很棒！继续保持，可以尝试更难级别的绘本</span></div>"
+            "<div class='tip-row'><span class='tip-badge'>🎉</span><span class='tip-text'>表现很棒！继续加油</span></div>"
         )
-
     return f"""<div class="card"><h3>📈 综合提升建议</h3>
   {"".join(suggestions)}
 </div>"""
@@ -267,24 +167,21 @@ def _score_card_html(dims: dict) -> str:
 
 def _pass_fail_html(six: dict) -> str:
     cls = "pass" if six["passed"] else "fail"
-    label = "表现不错！继续坚持 🎉" if six["passed"] else "继续加油，下次更好 🌟"
-    detail = six.get("pass_detail", "五维综合评分，再接再厉 💪")
+    label = "🎉 达到推荐标准" if six["passed"] else "💪 继续加油，下次更好"
     return f"""<div class="card result-{cls}">
   <div class="result-score">{six['total']:.0f}<span style="font-size:14px;color:rgba(255,255,255,0.7)">/100</span></div>
   <div class="result-label">{label}</div>
-  <div class="result-detail">{detail}</div>
 </div>"""
 
 
 def _classified_errors_html(classified: dict) -> str:
     sections = ""
-    # Map category keys to display info
     cat_info = {
         "grammatical_-ed": ("🔊", "尾音 -ed", "#f59e0b"),
         "grammatical_-ing": ("🔊", "尾音 -ing", "#f59e0b"),
         "grammatical_-s/es": ("🔊", "尾音 -s/es", "#f59e0b"),
-        "function_word": ("📖", "功能词 (冠词/介词)", "#3b82f6"),
-        "polysyllabic": ("📈", "多音节词/重音", "#8b5cf6"),
+        "function_word": ("📖", "高频词", "#3b82f6"),
+        "polysyllabic": ("📈", "多音节词", "#8b5cf6"),
         "vowel": ("🔤", "元音替换", "#ec4899"),
         "consonant": ("🔤", "辅音替换", "#14b8a6"),
         "other": ("❓", "其他错误", "#6b7280"),
@@ -305,7 +202,6 @@ def _classified_errors_html(classified: dict) -> str:
   </div>
   <div class="err-cat-tags">{word_tags}</div>
 </div>"""
-
     return f"""<div class="card"><h3>🔍 错误分类统计</h3>
   <div class="err-grid">{sections}</div>
 </div>"""
@@ -325,21 +221,17 @@ def _audio_html(url: str, label: str, icon: str, color: str) -> str:
 
 
 def _marked_text_html(errors: dict, text: str) -> str:
-    """Generate color-highlighted text from original text and errors."""
     words = text.strip().split()
     if not words:
         return text
-    # Build a simple set of error words
     sub_words = {e["expected"] for e in errors.get("substitutions", [])}
     del_words = set(errors.get("deletions", []))
-    # Tokenize text preserving original case
     result = []
     for w in words:
         w_clean = w.strip(".,!?;:'\"").lower()
         if w_clean in del_words:
             result.append(f'<span class="w-del">{w}</span>')
         elif w_clean in sub_words:
-            # Find the read-as for this word
             read_as = ""
             for e in errors.get("substitutions", []):
                 if e["expected"].lower() == w_clean:
@@ -361,8 +253,6 @@ def _page_block_html(pr: dict) -> str:
     errors = pr.get("errors", {})
     ref_url = pr.get("reference_audio_url", "")
     stu_url = pr.get("student_audio_url", "")
-    acoustic = pr.get("acoustic")
-    fluency = pr.get("fluency")
 
     n_sub = len(errors.get("substitutions", []))
     n_del = len(errors.get("deletions", []))
@@ -377,14 +267,6 @@ def _page_block_html(pr: dict) -> str:
         badges += f'<span class="badge ins">多读 {n_ins}</span> '
 
     acc_color = "#22c55e" if acc >= 80 else "#f59e0b" if acc >= 50 else "#ef4444"
-
-    # Acoustic/fluency badges
-    extra = ""
-    if acoustic:
-        extra += f'<span class="badge" style="background:#6366f1">🎵 声学{acoustic.get("similarity",0):.0f}%</span> '
-    if fluency:
-        extra += f'<span class="badge" style="background:#10b981">💨 流利{fluency.get("flow_score",0):.0f}%</span> '
-
     marked = _marked_text_html(errors, text)
     audio_block = _audio_html(ref_url, "原音", "🎧", "#667eea")
     audio_block += _audio_html(stu_url, "跟读", "🎙️", "#f093fb")
@@ -394,7 +276,7 @@ def _page_block_html(pr: dict) -> str:
     <div class="page-num">{pn}</div>
     <div class="page-info">
       <div class="page-acc" style="color:{acc_color}">{acc:.1f}%</div>
-      {badges}{extra}
+      {badges}
     </div>
   </div>
   <div class="page-body">
@@ -412,8 +294,8 @@ def _training_html(training: list) -> str:
         ttype = t.get("type", "")
         title = t.get("title", "")
         desc = t.get("description", "")
-
         body = ""
+
         if ttype == "final_sound":
             words = t.get("words", [])
             sentence = t.get("drill_sentence", "")
@@ -466,8 +348,6 @@ def _disclaimer_html(disclaimer: str) -> str:
   <p>{disclaimer}</p>
 </div>"""
 
-
-# ── Main generators ──
 
 def generate_html(
     opus_info: dict,
@@ -536,6 +416,11 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 .s-barline{{display:flex;align-items:center;gap:6px}}
 .s-val{{font-size:13px;font-weight:600;white-space:nowrap;width:52px;text-align:right;flex-shrink:0}}
 .s-comment{{font-size:11px;line-height:1.4;padding-left:28px}}
+.result-pass,.result-fail{{text-align:center;padding:16px}}
+.result-pass{{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff}}
+.result-fail{{background:linear-gradient(135deg,#f59e0b,#ea580c);color:#fff}}
+.result-score{{font-size:40px;font-weight:700}}
+.result-label{{font-size:14px;margin-top:4px}}
 .tip-row{{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #f5f5f5}}
 .tip-row:last-child{{border-bottom:none}}
 .tip-badge{{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f0f2f5;font-size:11px;font-weight:700;flex-shrink:0}}
@@ -544,14 +429,7 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 .tip-3{{background:#dbeafe;color:#3b82f6}}
 .tip-text{{font-size:12px;line-height:1.5;color:#555}}
 .tip-text strong{{color:#333}}
-.result-pass,.result-fail{{text-align:center;padding:16px}}
-.result-pass{{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff}}
-.result-fail{{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}}
-.result-score{{font-size:40px;font-weight:700}}
-.result-label{{font-size:14px;margin-top:4px}}
-.result-detail{{font-size:11px;opacity:.7;margin-top:4px}}
 .err-grid{{display:flex;flex-direction:column;gap:8px}}
-.err-cat{{}}
 .err-cat-head{{display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:4px}}
 .err-cat-label{{font-weight:600;flex:1;font-size:12px;color:#444}}
 .err-cat-count{{font-size:11px;color:#999;background:#f5f5f5;padding:1px 8px;border-radius:8px}}
@@ -601,12 +479,6 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 .disclaimer p{{font-size:11px;color:#92400e;line-height:1.6}}
 .footer{{text-align:center;color:#bbb;font-size:10px;padding:16px 0}}
 </style>
-  <meta property="og:title" content="⭐ 英语朗读评测报告" />
-  <meta property="og:description" content="学生音朗读打卡，AI自动评测发音/尾音/流利度/完整性" />
-  <meta property="og:type" content="website" />
-  <meta property="og:image" content="https://raw.githubusercontent.com/kojie2008/abc-reading-reports/main/og-card.png" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
 </head>
 <body>
 {banner}
@@ -648,7 +520,6 @@ def generate_json(
         safe = _safe(f"{name}_{book}")
         output_path = str(ReportConfig.dir / f"{safe}_{ts:%Y%m%d_%H%M%S}.json")
 
-    # Build classified errors summary
     classified_summary = {}
     for cat, info in classified_errors.items():
         if info:
@@ -707,17 +578,14 @@ def generate_friendly_summary(
     six_dimension: dict,
     report_url: str = "",
 ) -> str:
-    """生成可直接发朋友圈的鼓励型文案。"""
     name = opus_info.get("name", "宝贝")
     book = opus_info.get("book_info", {}).get("pictureBookName", "")
     level = opus_info.get("book_info", {}).get("lowerLevelDesc", "")
     ts = datetime.now()
-    acc = overall_score.get("accuracy", 0)
     total = overall_score.get("total_words", 0)
     correct = overall_score.get("correct_count", 0)
     total_score = six_dimension.get("total", 0)
 
-    # 鼓励型评价
     if total_score >= 80:
         compliment = "读得太棒了！发音标准，流利自然，继续加油！🎉"
     elif total_score >= 60:
@@ -725,9 +593,8 @@ def generate_friendly_summary(
     elif total_score >= 40:
         compliment = "读得真棒！每次都看到你的进步，坚持朗读的你超厉害！🌟"
     else:
-        compliment = "敢于开口就是最大的进步！多听原音慢慢跟读，每一遍都比上一遍好！🌟"
+        compliment = "敢于开口就是最大的进步！多听原音慢慢跟读🌟"
 
-    # 亮点
     dims = six_dimension.get("dimensions", {})
     strengths = []
     for key, label in [("pronunciation","发音"), ("pausing","流利度"), ("clarity","清晰度"), ("completeness","完整性")]:
@@ -750,69 +617,5 @@ def generate_friendly_summary(
     ]
     if report_url:
         lines.extend(["", f"🔗 完整报告: {report_url}"])
-
     lines.append(f"{ts:%m/%d %H:%M}")
     return "\n".join(lines)
-
-
-def generate_group_message(
-    opus_info: dict,
-    overall_score: dict,
-    six_dimension: dict,
-    report_url: str = "",
-    page_results: list | None = None,
-) -> list[dict]:
-    """
-    生成适合发到家族群的图文消息（一对一消息 + 链接卡片）。
-    返回 [{type,text/url}] 列表，可以用 message 工具逐条发送。
-    """
-    name = opus_info.get("name", "宝贝")
-    book = opus_info.get("book_info", {}).get("pictureBookName", "")
-    level = opus_info.get("book_info", {}).get("lowerLevelDesc", "")
-    ts = datetime.now()
-    total = overall_score.get("total_words", 0)
-    correct = overall_score.get("correct_count", 0)
-    acc = overall_score.get("accuracy", 0)
-    total_score = six_dimension.get("total", 0)
-    passed = six_dimension.get("passed", False)
-
-    parts = []
-    parts.append({
-        "type": "text",
-        "content": f"📚 {name} 的英语朗读打卡 🎯"
-    })
-    parts.append({
-        "type": "text",
-        "content": (
-            f"📖 读了《{book}》（Level {level}）\n"
-            f"✅ {total}个词，读对了{correct}个（准确率 {acc:.1f}%）\n"
-            f"{'🎉' if passed else '💪'} 五维综合评分: {total_score:.0f}/100"
-        )
-    })
-
-    # 维度亮点
-    dims = six_dimension.get("dimensions", {})
-    labels = []
-    for key, label, icon in [("pronunciation","发音","🎯"),("completeness","完整性","📋"),("pausing","流畅性","⏸️")]:
-        d = dims.get(key)
-        if d and d["max"] > 0:
-            pct = d["score"] / d["max"] * 100
-            if pct >= 60:
-                labels.append(f"{icon} {label}不错")
-    if labels:
-        parts.append({"type": "text", "content": "  可圈可点：" + "  ".join(labels)})
-
-    # 亮点总结
-    if total_score >= 60:
-        parts.append({"type": "text", "content": "🌟 读得很棒！继续坚持越来越好！👍"})
-    else:
-        parts.append({"type": "text", "content": "🌟 每次都在进步，坚持朗读的你超厉害！💕"})
-
-    parts.append({"type": "text", "content": f"📱 点击查看完整报告（含音频+逐页分析）👇"})
-
-    if report_url:
-        parts.append({"type": "link", "url": report_url, "title": f"{name} 的朗读评测报告", "description": f"《{book}》 · {total}词 · 五维评分{total_score:.0f}/100"})
-
-    parts.append({"type": "text", "content": f"{ts:%m/%d %H:%M}  ·  ABC Reading Evaluator"})
-
-    return parts

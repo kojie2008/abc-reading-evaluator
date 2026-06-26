@@ -285,13 +285,27 @@ def compute_six_dimensions(
 
     ⚠️ 发音准确率、尾音保留率、重音正确率为基于文本难度的预估分，仅供参考。
     """
+    """
+    Compute the 5-dimension evaluation score.
+
+    Dimensions:
+      1. 发音准确率 (30分) — 基于准确率、声学相似度加权
+      2. 尾音保留 (20分) — -ed/-es/-ing 保留比例
+      3. 流畅性 (20分) — 多读/漏读比例
+      4. 音量清晰 (15分) — ASR 置信度代理
+      5. 完整性 (10分) — 页覆盖率
+
+    总分范围 0-100，与 ABC Reading 原生评分保持较好一致性。
+    准确率66%→总分约70，80%→约80，90%+→约90-95。
+    """
     accuracy = overall_score.get("accuracy", 0) / 100.0
 
-    # 1. Pronunciation Accuracy (30分) — 温和映射：60%准确率 → 18分(60%分值)
-    # 用 sqrt 曲线让中段分数更高：60%准确率→约23分，70%→25分，80%→27分
-    pron_score = round(min(accuracy ** 0.7, 1.0) * 30, 1)
+    # ── 1. 发音准确率 (30分) ──
+    # 66%准确率→约25分，80%→27分，90%→29分
+    # accuracy^0.6 更温和：66%→0.78→23.5，80%→0.87→26.2，95%→0.97→29.1
+    pron_score = round(min(accuracy ** 0.6 * 30 + 2, 30), 1)
 
-    # 2. Final Sound Retention (20分) — 温和处理，用 sqrt 拉高中段
+    # ── 2. 尾音保留 (20分) ──
     final_sound_errors = 0
     final_sound_total = 0
     for sub in substitutions:
@@ -307,19 +321,23 @@ def compute_six_dimensions(
     if final_sound_total > 0:
         fs_rate = 1.0 - (final_sound_errors / final_sound_total)
     else:
-        fs_rate = 0.6  # neutral — 给个友善基础分
-    # sqrt 拉高：40%留存率 → 约63%分值
-    tail_score = round(min(fs_rate ** 0.6, 1.0) * 20, 1)
+        fs_rate = 0.7
+    # 基础10 + (留存率×10)，即30%留存→13分，60%→16分，100%→20分
+    tail_score = round(10 + fs_rate * 10, 1)
 
-    # 3. 流畅性 (20分) — 用更温和的惩罚
+    # ── 3. 流畅性 (20分) ──
     total_student = overall_score.get("student_word_count", 0) or 1
-    ins_rate = len(insertions) / total_student
-    pause_score = round(max(0, 1.0 - ins_rate * 1.5) * 20, 1)
+    ins_rate = len(insertions) / total_student  # 多读比例
+    del_rate = len(deletions) / max(total_student, 1)  # 漏读比例
+    flu_rate = 1.0 - min(ins_rate * 2 + del_rate * 1.5, 0.95)
+    # 低错误→18-20分，中等→14-17，高→10-14
+    pause_score = round(max(10, flu_rate * 20), 1)
 
-    # 4. 音量清晰 (15分) — 上浮15%
-    vol_score = round(min(accuracy * 1.15, 1.0) * 15, 1)
+    # ── 4. 音量清晰 (15分) ──
+    # 基础10 + 准确率映射，90%→13，100%→15
+    vol_score = round(min(10 + accuracy * 5, 15), 1)
 
-    # 5. 完整性 (10分) — 不变
+    # ── 5. 完整性 (10分) ──
     if total_pages > 0:
         comp_rate = 1.0 - (skipped_pages / total_pages)
     else:
@@ -327,8 +345,7 @@ def compute_six_dimensions(
     comp_score = round(comp_rate * 10, 1)
 
     total = round(pron_score + tail_score + pause_score + vol_score + comp_score, 1)
-    # 通过条件也放宽一点：总分≥55（原60）且发音+尾音≥15（原18）
-    passed = total >= 50 and (pron_score + tail_score) >= 15
+    passed = total >= 60 and (pron_score + tail_score) >= 18
 
     return {
         "dimensions": {
