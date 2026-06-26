@@ -557,6 +557,8 @@ def generate_json(
                 "page_num": int(pr["page_num"]),
                 "text": str(pr.get("text", "")),
                 "asr_text": str(pr.get("asr_text", "")),
+                "student_audio_url": str(pr.get("student_audio_url", "")),
+                "reference_audio_url": str(pr.get("reference_audio_url", "")),
                 "score": {k: float(v) if isinstance(v, (int, float)) else v for k, v in (pr.get("score") or {}).items()},
                 "errors": pr.get("errors", {}),
                 "acoustic": {k: float(v) if hasattr(v, "__float__") else v for k, v in (pr.get("acoustic") or {}).items()} if pr.get("acoustic") else None,
