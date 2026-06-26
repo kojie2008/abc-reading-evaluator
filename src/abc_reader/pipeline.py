@@ -27,7 +27,7 @@ def _work_id(opus_info: dict) -> str:
 
 def _aggregate(page_results: list) -> tuple[dict, dict]:
     total = {
-        "correct_count": 0, "total_words": 0,
+        "correct_count": 0, "total_words": 0, "original_words": 0,
         "substitution_count": 0, "deletion_count": 0, "insertion_count": 0,
     }
     all_errors = {"substitutions": [], "deletions": [], "insertions": []}
@@ -36,6 +36,10 @@ def _aggregate(page_results: list) -> tuple[dict, dict]:
         s = pr.get("score", {})
         for k in total:
             total[k] += s.get(k, 0)
+        # 原文词数（含被跳过页）
+        text = pr.get("text", "")
+        if text:
+            total["original_words"] += len(text.split())
         errs = pr.get("errors", {})
         all_errors["substitutions"].extend(errs.get("substitutions", []))
         all_errors["deletions"].extend(errs.get("deletions", []))
@@ -217,8 +221,13 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
     print(f"  ✅ 评测完成!")
     print(f"  📄 HTML: {html_path}")
     print(f"  📋 JSON: {json_path}")
-    print(f"  总词数: {overall_score['total_words']} | "
-          f"正确: {overall_score['correct_count']}")
+    orig = overall_score.get("original_words", overall_score['total_words'])
+    if orig != overall_score['total_words']:
+        print(f"  原文词数: {orig} | 已评测: {overall_score['total_words']} | "
+              f"正确: {overall_score['correct_count']}")
+    else:
+        print(f"  总词数: {overall_score['total_words']} | "
+              f"正确: {overall_score['correct_count']}")
     print(f"  替换: {overall_score['substitution_count']} | "
           f"漏读: {overall_score['deletion_count']} | "
           f"多读: {overall_score['insertion_count']}")
@@ -246,6 +255,10 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
 
     # ── 朋友圈文案 ──
     pub_url = result.get("public_url", "")
+    # GitHub 发布失败时用本地 nginx URL
+    if not pub_url and not skip_publish:
+        safe = html_path.name
+        pub_url = f"http://xglk.com.cn/{safe}"
     summary = generate_friendly_summary(
         opus_info, overall_score, six_dim, pub_url
     )
