@@ -267,38 +267,23 @@ def compute_six_dimensions(
         fs_rate = 0.5  # neutral if no data
     tail_score = round(fs_rate * 20, 1)
 
-    # 3. Word Stress (15分)
-    poly_total = 0
-    poly_errors = 0
-    for sub in substitutions:
-        e = sub["expected"].lower().strip()
-        if _syllable_count(e) >= 3:
-            poly_total += 1
-            if sub["read_as"].lower().strip() != e:
-                poly_errors += 1
-    if poly_total > 0:
-        stress_rate = 1.0 - (poly_errors / poly_total)
-    else:
-        stress_rate = 0.5
-    stress_score = round(stress_rate * 15, 1)
-
-    # 4. Pausing Awareness (15分)
+    # 3. Pausing Awareness (20分)
     # Fewer random insertions = better pausing
     total_student = overall_score.get("student_word_count", 0) or 1
     ins_rate = len(insertions) / total_student
-    pause_score = round(max(0, 1.0 - ins_rate * 3) * 15, 1)
+    pause_score = round(max(0, 1.0 - ins_rate * 3) * 20, 1)
 
-    # 5. Volume Clarity (10分) — estimated, always marked as estimate
-    vol_score = round(accuracy * 10, 1)  # proxy
+    # 4. Volume Clarity (15分) — estimated, always marked as estimate
+    vol_score = round(accuracy * 15, 1)  # proxy
 
-    # 6. Completeness (10分)
+    # 5. Completeness (10分)
     if total_pages > 0:
         comp_rate = 1.0 - (skipped_pages / total_pages)
     else:
         comp_rate = 1.0
     comp_score = round(comp_rate * 10, 1)
 
-    total = round(pron_score + tail_score + stress_score + pause_score + vol_score + comp_score, 1)
+    total = round(pron_score + tail_score + pause_score + vol_score + comp_score, 1)
     passed = total >= 60 and (pron_score + tail_score) >= 18
 
     return {
@@ -315,21 +300,15 @@ def compute_six_dimensions(
                 "label": "尾音保留",
                 "icon": "🔊",
             },
-            "stress": {
-                "score": stress_score,
-                "max": 15,
-                "label": "单词重音",
-                "icon": "📈",
-            },
             "pausing": {
                 "score": pause_score,
-                "max": 15,
+                "max": 20,
                 "label": "停顿意识",
                 "icon": "⏸️",
             },
             "clarity": {
                 "score": vol_score,
-                "max": 10,
+                "max": 15,
                 "label": "音量清晰",
                 "icon": "🔉",
             },
@@ -343,7 +322,7 @@ def compute_six_dimensions(
         "total": total,
         "max_total": 100,
         "passed": passed,
-        "disclaimer": "⚠️ 发音准确率、尾音保留率、重音正确率为基于文本难度的预估分，仅供参考。真实发音质量需通过人工聆听或语音识别(ASR)确认。建议家长对照原声逐句检查，重点关注'发音难点词'和'尾音重点词'。",
+        "disclaimer": "⚠️ 本评分为AI基于语音识别和声学对比的自动估算，仅供参考。建议家长对照原声逐句检查，重点关注错误较多的单词和尾音。",
     }
 
 

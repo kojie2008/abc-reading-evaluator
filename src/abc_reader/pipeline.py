@@ -14,7 +14,7 @@ from .downloader import download_all
 from .asr import convert_to_wav, transcribe
 from .comparator import compare, format_marked, classify_errors, compute_six_dimensions, generate_training
 from .acoustic import acoustic_similarity, fluency_analysis
-from .reporter import generate_html, generate_json
+from .reporter import generate_html, generate_json, generate_friendly_summary
 from .publisher import publish
 
 
@@ -223,8 +223,19 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
           f"漏读: {overall_score['deletion_count']} | "
           f"多读: {overall_score['insertion_count']}")
     print(f"  🎯 单词准确率: {overall_score['accuracy']:.1f}%")
-    print(f"  📊 六维评分: {six_dim['total']}/{six_dim['max_total']} "
+    print(f"  📊 五维评分: {six_dim['total']}/{six_dim['max_total']} "
           f"{'✅通过' if six_dim['passed'] else '❌未通过'}")
+    print(f"{'=' * 60}")
+
+    # ── 朋友圈文案 ──
+    report_url = publish_result.get("url", "") if not skip_publish and publish_result else ""
+    summary = generate_friendly_summary(
+        opus_info, overall_score, six_dim, report_url
+    )
+    print(f"\n{'=' * 60}")
+    print("📱 朋友圈打卡文案 (可直接复制):")
+    print(f"{'=' * 60}")
+    print(summary)
     print(f"{'=' * 60}")
 
     result = {
@@ -245,6 +256,21 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
         if pub_result.get("url"):
             print(f"  🔗 永久链接: {pub_result['url']}")
         result["public_url"] = pub_result.get("url")
+
+    # ── 朋友圈文案 ──
+    pub_url = result.get("public_url", "")
+    summary = generate_friendly_summary(
+        opus_info, overall_score, six_dim, pub_url
+    )
+    print(f"\n{'=' * 60}")
+    print("📱 朋友圈打卡文案 (可直接复制):")
+    print(f"{'=' * 60}")
+    print(summary)
+    print(f"{'=' * 60}")
+
+    if not keep_audio:
+        cleanup_data_dir()
+
 
     if not keep_audio:
         cleanup_data_dir()
