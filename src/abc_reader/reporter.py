@@ -584,40 +584,58 @@ def generate_friendly_summary(
     book = opus_info.get("book_info", {}).get("pictureBookName", "")
     level = opus_info.get("book_info", {}).get("lowerLevelDesc", "")
     ts = datetime.now()
+    orig = overall_score.get("original_words", 0)
     total = overall_score.get("total_words", 0)
     correct = overall_score.get("correct_count", 0)
     total_score = six_dimension.get("total", 0)
 
-    if total_score >= 80:
-        compliment = "读得太棒了！发音标准，流利自然，继续加油！🎉"
-    elif total_score >= 60:
-        compliment = "读得很不错！大部分单词都读对了，继续坚持练习会越来越好！👍"
-    elif total_score >= 40:
-        compliment = "读得真棒！每次都看到你的进步，坚持朗读的你超厉害！🌟"
-    else:
-        compliment = "敢于开口就是最大的进步！多听原音慢慢跟读🌟"
-
     dims = six_dimension.get("dimensions", {})
-    strengths = []
+    
+    # 最弱和最强的维度
+    scored = []
     for key, label in [("pronunciation","发音"), ("pausing","流利度"), ("clarity","清晰度"), ("completeness","完整性")]:
         d = dims.get(key)
-        if d and d["max"] > 0 and d["score"] / d["max"] * 100 >= 60:
-            strengths.append(label)
+        if d and d["max"] > 0:
+            pct = d["score"] / d["max"] * 100
+            scored.append((pct, label))
+    scored.sort(key=lambda x: x[0])
+    
+    strengths = [l for p, l in scored if p >= 60]
+    weak = [l for p, l in scored if p < 50]
     strength_text = "、".join(strengths) if strengths else "敢于开口"
-
-    lines = [
-        f"📚 {name} 的英语朗读打卡",
-        "",
-        f"今天读了《{book}》（Level {level}）",
-        f"✅ {total}个单词中读对了{correct}个",
-        f"五维综合评分: {total_score:.0f}/100",
-        f"可圈可点：{strength_text}",
-        "",
-        compliment,
-        "",
-        "每天一点点，进步看得见 💕",
-    ]
+    
+    # 根据具体分数段和不足生成定制鼓励
+    lines = [f"📚 {name} 的英语阅读打卡"]
+    lines.append("")
+    lines.append(f"📖 《{book}》（Level {level}）")
+    
+    if orig and orig != total:
+        lines.append(f"📝 原文{orig}词，测评{total}词，正确{correct}个")
+    else:
+        lines.append(f"📝 共{total}词，正确{correct}个")
+    lines.append(f"⭐ 综合评分 {total_score:.0f}/100")
+    
+    if total_score >= 85:
+        lines.append("")
+        lines.append(f"🎉 {name}今天读得太棒啦！{strength_text}方面都很出色，")
+        lines.append("发音越来越标准了，继续坚持，你是最棒的小朗读者！🌟")
+    elif total_score >= 70:
+        lines.append("")
+        lines.append(f"👍 {name}今天的表现很不错哦！{strength_text}方面做得很好，")
+        lines.append(f"{'、'.join(weak[:2]) + '方面再练练会更棒！' if weak else '继续坚持每天朗读，进步会越来越大！💪'}")
+    elif total_score >= 50:
+        lines.append("")
+        lines.append(f"💪 {name}又完成了今天的朗读，真了不起！{strength_text}方面可圈可点，")
+        lines.append(f"建议多听原音，{'、'.join(weak[:2]) + '方面会有很大提升！' if weak else '每天进步一点点！🌟'}")
+    else:
+        lines.append("")
+        lines.append(f"🌟 {name}敢于开口朗读就是最大的进步！")
+        lines.append("多听原音跟读，慢慢来，每个人都是这样进步的，加油！💕")
+    
+    lines.append("")
+    lines.append("每天坚持15分钟，英语阅读不费力 ✨")
+    
     if report_url:
         lines.extend(["", f"🔗 完整报告: {report_url}"])
-    lines.append(f"{ts:%m/%d %H:%M}")
+    lines.append(f"📱 {ts:%m/%d} {name}的阅读记录")
     return "\n".join(lines)
