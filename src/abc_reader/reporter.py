@@ -313,11 +313,19 @@ def _training_html(training: list) -> str:
 
         elif ttype == "tricky_words":
             words = t.get("words", [])
-            body = f"""<div class="train-desc">{desc}</div>
-            <div class="train-grid">{"".join(
-                f'<div class="tw-card"><strong>{w["word"]}</strong><span class="tw-err">读成: {", ".join(w["errors"][:2])}</span><span class="tw-n">×{w["count"]}</span></div>'
-                for w in words
-            )}</div>"""
+            cards = ""
+            for w in words:
+                ws = w["word"].replace("'", "\\'")
+                errs = ", ".join(w["errors"][:2])
+                card = '<div class="tw-card"><strong>' + w["word"] + '</strong>'
+                if w.get("phonetic"):
+                    card += '<span class="tw-ipa">/' + w["phonetic"] + '/</span>'
+                card += '<button class="tts-btn" onclick=\'_s("' + ws + '")\'>🔊</button>'
+                card += '<span class="tw-err">读成: ' + errs + '</span>'
+                card += '<span class="tw-n">\u00d7' + str(w["count"]) + '</span></div>'
+                cards += card
+            body = '<div class="train-desc">' + desc + '</div>'
+            body += '<div class="train-grid">' + cards + '</div>'
 
         elif ttype == "minimal_pairs":
             pairs = t.get("pairs", [])
@@ -382,6 +390,8 @@ def generate_html(
     pages = "\n".join(_page_block_html(pr) for pr in page_results)
     training_sec = _training_html(training)
     disclaimer = _disclaimer_html(six_dimension.get("disclaimer", ""))
+
+    _SPEAK_JS = '<script>function _s(t){if(!window.speechSynthesis)return;window.speechSynthesis.cancel();var u=new SpeechSynthesisUtterance(t);u.lang="en-US";u.rate=0.7;window.speechSynthesis.speak(u);}</script>'
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -468,8 +478,11 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 .train-grid{{display:flex;flex-direction:column;gap:6px}}
 .tw-card{{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#fef3c7;border-radius:10px;font-size:12px}}
 .tw-card strong{{color:#92400e}}
+.tw-ipa{{color:#8b5cf6;font-size:11px;font-style:italic;font-family:'Courier New',monospace}}
 .tw-err{{color:#bbb;font-size:11px;text-decoration:line-through;flex:1}}
 .tw-n{{color:#f59e0b;font-weight:700;font-size:11px}}
+.tts-btn{{background:#667eea10;border:1px solid #667eea30;border-radius:8px;padding:4px 8px;cursor:pointer;font-size:12px;color:#667eea;transition:all .15s}}
+.tts-btn:active{{background:#667eea;color:#fff}}
 .tp-card{{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f0fdf4;border-radius:10px;font-size:12px}}
 .tp-correct{{color:#22c55e;font-weight:600}}
 .tp-wrong{{color:#ef4444;font-weight:600}}
@@ -493,6 +506,7 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 {disclaimer}
 <div class="footer">ABC Reading Evaluator v3.0 · {ts:%Y-%m-%d %H:%M}</div>
 </div>
+{_SPEAK_JS}
 </body>
 </html>"""
 

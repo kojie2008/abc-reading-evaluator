@@ -11,6 +11,24 @@ Produces:
 
 import difflib
 import re
+
+# ── IPA Phonetics ──
+_ENG_TO_IPA = None
+
+
+def _get_ipa(word: str) -> str:
+    """Get IPA pronunciation. Falls back to empty string if unavailable."""
+    global _ENG_TO_IPA
+    if _ENG_TO_IPA is None:
+        try:
+            from eng_to_ipa import convert as _c
+            _ENG_TO_IPA = _c
+        except ImportError:
+            _ENG_TO_IPA = lambda w: ""
+    try:
+        return _ENG_TO_IPA(word) or ""
+    except Exception:
+        return ""
 from collections import Counter
 from typing import Literal, Any
 
@@ -485,10 +503,11 @@ def generate_training(
         training.append({
             "type": "tricky_words",
             "title": "🎯 长音 / 难词纠音训练",
-            "description": "以下是你发音不准的长音词和生词——对照原音逐个练习：",
+            "description": "以下是你发音不准的长音词和生词——点击🔊听标准读音：",
             "words": [
                 {
                     "word": w["word"],
+                    "phonetic": _get_ipa(w["word"]),
                     "errors": list(w["errors"])[:3],
                     "count": w["count"],
                 }
