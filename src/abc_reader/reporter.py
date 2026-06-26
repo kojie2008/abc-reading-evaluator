@@ -601,6 +601,12 @@ body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;backg
 .disclaimer p{{font-size:11px;color:#92400e;line-height:1.6}}
 .footer{{text-align:center;color:#bbb;font-size:10px;padding:16px 0}}
 </style>
+  <meta property="og:title" content="⭐ 英语朗读评测报告" />
+  <meta property="og:description" content="学生音朗读打卡，AI自动评测发音/尾音/流利度/完整性" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://raw.githubusercontent.com/kojie2008/abc-reading-reports/main/og-card.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
 </head>
 <body>
 {banner}
@@ -747,3 +753,66 @@ def generate_friendly_summary(
 
     lines.append(f"{ts:%m/%d %H:%M}")
     return "\n".join(lines)
+
+
+def generate_group_message(
+    opus_info: dict,
+    overall_score: dict,
+    six_dimension: dict,
+    report_url: str = "",
+    page_results: list | None = None,
+) -> list[dict]:
+    """
+    生成适合发到家族群的图文消息（一对一消息 + 链接卡片）。
+    返回 [{type,text/url}] 列表，可以用 message 工具逐条发送。
+    """
+    name = opus_info.get("name", "宝贝")
+    book = opus_info.get("book_info", {}).get("pictureBookName", "")
+    level = opus_info.get("book_info", {}).get("lowerLevelDesc", "")
+    ts = datetime.now()
+    total = overall_score.get("total_words", 0)
+    correct = overall_score.get("correct_count", 0)
+    acc = overall_score.get("accuracy", 0)
+    total_score = six_dimension.get("total", 0)
+    passed = six_dimension.get("passed", False)
+
+    parts = []
+    parts.append({
+        "type": "text",
+        "content": f"📚 {name} 的英语朗读打卡 🎯"
+    })
+    parts.append({
+        "type": "text",
+        "content": (
+            f"📖 读了《{book}》（Level {level}）\n"
+            f"✅ {total}个词，读对了{correct}个（准确率 {acc:.1f}%）\n"
+            f"{'🎉' if passed else '💪'} 五维综合评分: {total_score:.0f}/100"
+        )
+    })
+
+    # 维度亮点
+    dims = six_dimension.get("dimensions", {})
+    labels = []
+    for key, label, icon in [("pronunciation","发音","🎯"),("completeness","完整性","📋"),("pausing","流畅性","⏸️")]:
+        d = dims.get(key)
+        if d and d["max"] > 0:
+            pct = d["score"] / d["max"] * 100
+            if pct >= 60:
+                labels.append(f"{icon} {label}不错")
+    if labels:
+        parts.append({"type": "text", "content": "  可圈可点：" + "  ".join(labels)})
+
+    # 亮点总结
+    if total_score >= 60:
+        parts.append({"type": "text", "content": "🌟 读得很棒！继续坚持越来越好！👍"})
+    else:
+        parts.append({"type": "text", "content": "🌟 每次都在进步，坚持朗读的你超厉害！💕"})
+
+    parts.append({"type": "text", "content": f"📱 点击查看完整报告（含音频+逐页分析）👇"})
+
+    if report_url:
+        parts.append({"type": "link", "url": report_url, "title": f"{name} 的朗读评测报告", "description": f"《{book}》 · {total}词 · 五维评分{total_score:.0f}/100"})
+
+    parts.append({"type": "text", "content": f"{ts:%m/%d %H:%M}  ·  ABC Reading Evaluator"})
+
+    return parts

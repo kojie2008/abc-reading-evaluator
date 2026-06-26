@@ -14,7 +14,7 @@ from .downloader import download_all
 from .asr import convert_to_wav, transcribe
 from .comparator import compare, format_marked, classify_errors, compute_six_dimensions, generate_training
 from .acoustic import acoustic_similarity, fluency_analysis
-from .reporter import generate_html, generate_json, generate_friendly_summary
+from .reporter import generate_html, generate_json, generate_friendly_summary, generate_group_message
 from .publisher import publish
 
 
@@ -266,6 +266,20 @@ async def run(share_url: str, keep_audio: bool = True, skip_publish: bool = Fals
     print("📱 朋友圈打卡文案 (可直接复制):")
     print(f"{'=' * 60}")
     print(summary)
+    print(f"{'=' * 60}")
+
+    # ── 家族群图文版 ──
+    group_parts = generate_group_message(
+        opus_info, overall_score, six_dim, pub_url
+    )
+    print(f"\n📱 家族群分享版 (可直接发送消息):")
+    print(f"{'=' * 60}")
+    print(f"先把链接转给群，然后发送以下文本：")
+    for p in group_parts:
+        if p["type"] == "text":
+            print(f"\n{p['content']}")
+        elif p["type"] == "link":
+            print(f"\n🔗 {p['url']}")
     print(f"{'=' * 60}")
 
     if not keep_audio:
